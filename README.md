@@ -1,6 +1,8 @@
-# Seeker Pay
+# Tilltide
 
 A mobile-first AI payments agent for small businesses on Solana.
+
+*Till* — the shop counter. *Tide* — payments flowing in and out on their own, from the Cornish coast to anywhere.
 
 Shops take USDC on a Solana Seeker phone, reward customers with onchain loyalty points (SKR as a bonus layer), and an AI agent handles reconciliation and payouts. The React Native agent-payments kit underneath is open source.
 
