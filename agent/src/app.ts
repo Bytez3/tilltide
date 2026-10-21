@@ -121,6 +121,16 @@ app.get('/ready', async (c) => {
 const favicon = readFileSync(new URL('../public/favicon.png', import.meta.url))
 const privacyPage = readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8')
 const termsPage = readFileSync(new URL('../public/terms.html', import.meta.url), 'utf8')
+const landingPage = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
+// Screenshots for the landing page: a fixed set, read once (no paths from the request reach the disk).
+const shots = new Map(
+  ['01-till-paypal', '03-paid-paypal', '11-activity-end-of-day'].map((n) => [`${n}.jpg`, readFileSync(new URL(`../public/shots/${n}.jpg`, import.meta.url))]),
+)
+app.get('/', (c) => c.html(landingPage))
+app.get('/shots/:name', (c) => {
+  const img = shots.get(c.req.param('name'))
+  return img ? c.body(img, 200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400' }) : c.notFound()
+})
 app.get('/privacy', (c) => c.html(privacyPage))
 app.get('/terms', (c) => c.html(termsPage))
 app.get('/favicon.png', (c) => c.body(favicon, 200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }))
