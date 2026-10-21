@@ -109,7 +109,7 @@ docker build -f agent/Dockerfile -t tilltide-agent .
 
 ## Live
 
-API (devnet): https://api-production-83900.up.railway.app. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
+API (devnet): https://api-production-83900.up.railway.app. Its home page (`/`) is the public landing page for shops and judges; `/r/<id>` is a customer receipt. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
 
 ## Running it for real
 

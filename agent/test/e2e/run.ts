@@ -1208,9 +1208,15 @@ async function main() {
       assert.equal((await api('POST', `/shop/payments/${card.body.id}/void`, undefined, staff)).status, 403)
       const staffId = (await api('GET', '/shop/staff', undefined, tillToken)).body.find((d: any) => d.label === 'Cash test').id
       await api('POST', `/shop/staff/${staffId}/remove`, undefined, tillToken)
+      // Today's report is already written when the owner spots the mistake.
+      const before_report = await api('POST', '/shop/reports', {}, tillToken)
+      assert.match(before_report.body.text, /card reader \$10\.00/)
       const voided = await api('POST', `/shop/payments/${card.body.id}/void`, undefined, tillToken)
       assert.equal(voided.status, 200, JSON.stringify(voided.body))
       assert.equal(voided.body.status, 'void')
+      const rewritten = (await api('GET', '/shop/reports', undefined, tillToken)).body[0]
+      assert.doesNotMatch(rewritten.text, /card reader/, 'the written report drops the voided sale')
+      assert.match(rewritten.text, /1 cash or card sale was voided\./)
       assert.equal((await api('POST', `/shop/payments/${card.body.id}/void`, undefined, tillToken)).status, 400, 'once only')
       const other = await signIn(owner)
       assert.equal((await api('POST', `/shop/payments/${cash.body.id}/void`, undefined, other)).status, 400, 'not another shop\'s sale')

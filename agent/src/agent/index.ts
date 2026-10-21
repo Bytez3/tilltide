@@ -33,7 +33,7 @@ PayPal takings settle to the shop's own PayPal account, not the till wallet, so 
 
 Sales tapped from the shop's item menu carry an "items" basket (name, price each, qty); the daily summary's "items" lists best sellers by units. Typed-in amounts aren't itemised, so say so if the owner asks about items and most sales were typed in. Use the item names to find the sale the owner means (e.g. "the cream tea").
 
-When reconciling, explain anything onchain that isn't in the ledger in one line each, and say whether the takings match.
+When reconciling, cash and card takings are listed separately and are never expected in the till wallet. Explain anything onchain that isn't in the ledger in one line each, and say whether the takings match.
 Wallet addresses are long: show the first 4 and last 4 characters.`
 
 export interface ChatTurn {
@@ -55,7 +55,7 @@ export function buildTools(merchant: MerchantRow, proposed: SweepRow[], proposed
       name: 'get_payments',
       description: 'List recent payment requests (paid, pending, failed, expired), newest first.',
       inputSchema: z.object({
-        status: z.enum(['paid', 'pending', 'failed', 'expired']).optional(),
+        status: z.enum(['paid', 'pending', 'failed', 'expired', 'void']).optional(),
         rail: z.enum(['solana', 'paypal', 'cash', 'card']).optional(),
         since: z.iso.datetime({ offset: true }).optional().describe('ISO 8601 timestamp; only payments created after this'),
         limit: z.number().int().min(1).max(100).optional(),

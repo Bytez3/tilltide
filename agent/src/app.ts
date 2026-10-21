@@ -24,7 +24,7 @@ import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, Pay
 import { OnboardingError, refreshPayPalConnection, startPayPalOnboarding } from './services/paypal-onboarding'
 import { PayPalError } from './paypal'
 import { approveRefund, getRefund, proposeRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
-import { getDailySummary, reconcileDay, todayIn } from './services/summary'
+import { dayIn, getDailySummary, reconcileDay, todayIn } from './services/summary'
 import { listReports, writeDailyReport } from './services/reports'
 import { createExportToken, exportCsv, redeemExportToken } from './services/export'
 import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
@@ -455,6 +455,10 @@ shop.post('/payments/:id/void', async (c) => {
   if (!id.success) throw new HTTPException(404, { message: 'Sale not found' })
   const voided = await voidSale(merchant.id, id.data)
   if (!voided) throw new HTTPException(400, { message: 'Only a paid cash or card sale can be voided' })
+  // If that day's report is already written, rewrite it so it no longer counts the voided sale.
+  const day = dayIn(merchant.timezone, voided.paidAt ?? voided.createdAt)
+  const [written] = await sql`select 1 from daily_reports where merchant_id = ${merchant.id} and day = ${day}`
+  if (written) await writeDailyReport(merchant, day).catch((err) => console.error('report rewrite after void failed', err))
   return c.json(serializePayment(voided))
 })
 

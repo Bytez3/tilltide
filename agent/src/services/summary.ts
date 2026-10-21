@@ -18,8 +18,16 @@ export async function getPaymentsForDay(merchant: MerchantRow, date: string): Pr
 }
 
 export function todayIn(timezone: string): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(new Date())
+  return dayIn(timezone, new Date())
 }
+
+/** The shop's calendar day (YYYY-MM-DD) for a moment in time. */
+export function dayIn(timezone: string, when: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: timezone }).format(when)
+}
+
+const sumPaid = (payments: PaymentRow[], rail: PaymentRow['rail']) =>
+  payments.filter((p) => p.rail === rail && p.status === 'paid').reduce((s, p) => s + p.amount, 0n)
 
 export async function getDailySummary(merchant: MerchantRow, date: string) {
   const token = merchantToken(merchant)
@@ -150,6 +158,9 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     ledgerPaidCount: payments.filter((p) => p.status === 'paid').length,
     // PayPal takings settle to the merchant's PayPal balance, not the till wallet.
     paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount, 0n), token.decimals),
+    // Cash and card-reader sales are recorded for the books; that money never reaches the till wallet either.
+    cashTakings: fromBaseUnits(sumPaid(payments, 'cash'), token.decimals),
+    cardTakings: fromBaseUnits(sumPaid(payments, 'card'), token.decimals),
     paypalCaptures: paypalPaid.map((p) => p.paypalCaptureId),
     // Gross amount swept out of the till today (what the owner received plus Tilltide's fee).
     sweptOutToday: fromBaseUnits(sweptToday, token.decimals),
