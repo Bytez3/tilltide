@@ -1,7 +1,7 @@
 import { isAddress } from '@solana/kit'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useEffect, useState } from 'react'
-import { ScrollView, Text, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
 import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
@@ -14,6 +14,7 @@ export default function SettingsScreen() {
   const { disconnect } = useMobileWallet()
   const [rate, setRate] = useState('')
   const [owner, setOwner] = useState('')
+  const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [lookup, setLookup] = useState('')
@@ -23,6 +24,7 @@ export default function SettingsScreen() {
     if (!merchant) return
     setRate(String(merchant.pointsPerUnit))
     setOwner(merchant.ownerWallet ?? '')
+    setToken(merchant.token)
   }, [merchant])
 
   async function save() {
@@ -32,7 +34,7 @@ export default function SettingsScreen() {
       const pointsPerUnit = Number(rate)
       if (!Number.isFinite(pointsPerUnit) || pointsPerUnit < 0) throw new Error('Points rate must be a number')
       if (owner && !isAddress(owner)) throw new Error('Owner wallet is not a Solana address')
-      await update({ pointsPerUnit, ownerWallet: owner || null })
+      await update({ pointsPerUnit, ownerWallet: owner || null, token })
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -57,7 +59,22 @@ export default function SettingsScreen() {
             Till wallet {shortAddress(merchant.wallet)} · {merchant.token} · {merchant.cluster}
           </Text>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {merchant.token}</Text>
+          <Text style={[ui.body, { marginTop: 8 }]}>Take payments in</Text>
+          <View style={ui.row}>
+            {(['USDC', 'PYUSD'] as const).map((t) => (
+              <Pressable
+                key={t}
+                onPress={() => setToken(t)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: token === t }}
+                style={[ui.input, { flex: 1, alignItems: 'center' }, token === t && { borderColor: colors.sea, borderWidth: 2 }]}
+              >
+                <Text style={[ui.body, { fontWeight: '600' }]}>{t}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {token}</Text>
           <TextInput style={ui.input} keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Owner wallet (where sweeps go)</Text>

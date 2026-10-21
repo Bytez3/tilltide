@@ -5,6 +5,8 @@ export const sql = postgres(config.databaseUrl, {
   // numeric columns hold token base units; keep them as strings and convert to bigint ourselves.
   types: { bigint: postgres.BigInt },
   transform: postgres.camel,
+  // Silence 'already exists, skipping' notices from re-runnable migrations.
+  onnotice: () => {},
 })
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired'
@@ -38,7 +40,10 @@ export interface PaymentRow {
   payer: string | null
   failureReason: string | null
   points: bigint | null
+  /** null: not yet issued. 'sending': mint sent, awaiting the chain. 'none': payment earned 0 points. */
+  pointsStatus: 'sending' | 'issued' | 'none' | null
   pointsSignature: string | null
+  pointsClaimedAt: Date | null
   createdAt: Date
   paidAt: Date | null
   paypalOrderId: string | null

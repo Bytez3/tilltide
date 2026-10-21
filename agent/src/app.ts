@@ -17,6 +17,16 @@ import { checkPayment } from './services/watcher'
 import { rpc } from './solana'
 
 const wallet = z.string().refine(isAddress, 'Not a Solana address')
+const timezone = z.string().refine((tz) => {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz })
+    return true
+  } catch {
+    return false
+  }
+}, 'Unknown timezone')
+const isUuid = (id: string) => z.uuid().safeParse(id).success
+const isDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`))
 
 async function body<T extends z.ZodType>(c: { req: { json(): Promise<unknown> } }, schema: T): Promise<z.infer<T>> {
   const parsed = schema.safeParse(await c.req.json().catch(() => ({})))
@@ -25,7 +35,7 @@ async function body<T extends z.ZodType>(c: { req: { json(): Promise<unknown> } 
 }
 
 async function merchantOr404(id: string): Promise<MerchantRow> {
-  const merchant = z.uuid().safeParse(id).success ? await getMerchant(id) : null
+  const merchant = isUuid(id) ? await getMerchant(id) : null
   if (!merchant) throw new HTTPException(404, { message: 'Merchant not found' })
   return merchant
 }
@@ -80,6 +90,9 @@ app.get('/paypal/return', async (c) => {
   const orderId = c.req.query('token')
   const [payment] = orderId ? await sql<PaymentRow[]>`select * from payments where paypal_order_id = ${orderId}` : []
   if (!payment) return c.html(page('Payment not found', 'Show this screen to the shop.'), 404)
+  if (payment.status === 'expired') {
+    return c.html(page('Request expired', 'No money was taken. Please ask the shop for a new QR code.'))
+  }
   await checkPayPalPayment(payment).catch((err) => console.error('PayPal capture on return failed', err))
   const latest = (await getPayment(payment.id))!
   return latest.status === 'paid'
@@ -122,7 +135,7 @@ app.patch('/merchants/:id', async (c) => {
       token: z.enum(['USDC', 'PYUSD']).optional(),
       pointsPerUnit: z.number().min(0).max(1000).optional(),
       bonusMultiplier: z.number().min(1).max(10).optional(),
-      timezone: z.string().optional(),
+      timezone: timezone.optional(),
     }),
   )
   const [row] = await sql<MerchantRow[]>`
@@ -183,9 +196,10 @@ app.get('/merchants/:id/payments', async (c) => {
 /** The app polls this while the QR is on screen. Also checks the chain directly so "Paid ✓" shows fast. */
 app.get('/payments/:id', async (c) => {
   const id = c.req.param('id')
-  let payment = z.uuid().safeParse(id).success ? await getPayment(id) : null
+  let payment = isUuid(id) ? await getPayment(id) : null
   if (!payment) throw new HTTPException(404, { message: 'Payment not found' })
-  if (payment.status === 'pending') {
+  // Expired Solana requests are re-checked too: a customer may have paid late, and the money did arrive.
+  if (payment.status === 'pending' || (payment.status === 'expired' && payment.rail === 'solana')) {
     const merchant = (await getMerchant(payment.merchantId))!
     if (await checkPayment(payment, merchant).catch(() => false)) payment = (await getPayment(id))!
   }
@@ -195,6 +209,7 @@ app.get('/payments/:id', async (c) => {
 app.get('/merchants/:id/summary', async (c) => {
   const merchant = await merchantOr404(c.req.param('id'))
   const date = c.req.query('date') ?? todayIn(merchant.timezone)
+  if (!isDate(date)) throw new HTTPException(400, { message: 'date must be YYYY-MM-DD' })
   const reconcile = c.req.query('reconcile') === 'true'
   return c.json({
     summary: await getDailySummary(merchant, date),
@@ -236,6 +251,7 @@ app.get('/merchants/:id/sweeps', async (c) => {
 
 /** The app calls this after the owner signed the sweep in their wallet. */
 app.post('/sweeps/:id/confirm', async (c) => {
+  if (!isUuid(c.req.param('id'))) throw new HTTPException(404, { message: 'Sweep not found' })
   const input = await body(c, z.object({ signature: z.string().min(64).max(100) }))
   try {
     return c.json(serializeSweep(await confirmSweep(c.req.param('id'), input.signature as Signature)))
@@ -245,6 +261,7 @@ app.post('/sweeps/:id/confirm', async (c) => {
 })
 
 app.post('/sweeps/:id/cancel', async (c) => {
+  if (!isUuid(c.req.param('id'))) throw new HTTPException(404, { message: 'No open sweep with that id' })
   const [row] = await sql<SweepRow[]>`
     update sweeps set status = 'cancelled' where id = ${c.req.param('id')} and status = 'proposed' returning *`
   if (!row) throw new HTTPException(404, { message: 'No open sweep with that id' })

@@ -1,10 +1,11 @@
 import { fromBaseUnits } from '@tilltide/agent-pay-kit'
-import { address } from '@solana/kit'
+import { address, type Signature } from '@solana/kit'
 import { findAssociatedTokenPda } from '@solana-program/token'
 import { config } from '../config'
 import { sql, type MerchantRow, type PaymentRow } from '../db'
 import { rpc } from '../solana'
 import { merchantToken } from './merchants'
+import { tillBalance } from './sweeps'
 
 /** Start and end of a calendar day (YYYY-MM-DD) in the merchant's timezone, as a Postgres range. */
 function dayBounds(date: string, timezone: string) {
@@ -57,7 +58,7 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
       solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + p.amount, 0n), token.decimals),
       paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
     },
-    paymentsMissingPoints: paid.filter((p) => p.rail === 'solana' && !p.pointsSignature).map((p) => p.id),
+    paymentsMissingPoints: paid.filter((p) => p.rail === 'solana' && p.pointsStatus !== 'issued' && p.pointsStatus !== 'none').map((p) => p.id),
     failed: payments.filter((p) => p.status === 'failed').map((p) => ({ id: p.id, reason: p.failureReason })),
     expiredRequests: payments.filter((p) => p.status === 'expired').length,
     stillPending: payments.filter((p) => p.status === 'pending').length,
@@ -80,11 +81,7 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     tokenProgram: token.tokenProgram,
   })
 
-  const balance = await rpc
-    .getTokenAccountBalance(tillAccount, { commitment: 'confirmed' })
-    .send()
-    .then((r) => r.value.amount)
-    .catch(() => '0')
+  const balance = await tillBalance(merchant)
 
   const [startRow] = await sql<{ start: Date }[]>`select ${dayBounds(date, merchant.timezone)} as start`
   const startSec = BigInt(Math.floor(startRow!.start.getTime() / 1000))
@@ -97,10 +94,23 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
 
   for (const sweep of sweeps) if (sweep.signature) known.add(sweep.signature)
 
-  const sigs = await rpc.getSignaturesForAddress(tillAccount, { limit: 200, commitment: 'confirmed' }).send()
-  const unmatched = sigs
-    .filter((s) => s.err === null && s.blockTime !== null && s.blockTime >= startSec && s.blockTime < endSec)
-    .filter((s) => !known.has(s.signature))
+  // Page back through the till's history until we pass the start of the day.
+  type SigInfo = { signature: Signature; err: unknown; blockTime: bigint | null }
+  const dayActivity: SigInfo[] = []
+  let before: Signature | undefined
+  for (let page = 0; page < 10; page++) {
+    const batch = await rpc
+      .getSignaturesForAddress(tillAccount, { limit: 1000, before, commitment: 'confirmed' })
+      .send()
+    for (const s of batch) {
+      if (s.blockTime !== null && s.blockTime >= startSec && s.blockTime < endSec) dayActivity.push(s)
+    }
+    const last = batch.at(-1)
+    if (!last || batch.length < 1000 || (last.blockTime !== null && last.blockTime < startSec)) break
+    before = last.signature
+  }
+  const unmatched = dayActivity
+    .filter((s) => s.err === null && !known.has(s.signature))
     .map((s) => ({ signature: s.signature, time: new Date(Number(s.blockTime) * 1000).toISOString() }))
 
   return {

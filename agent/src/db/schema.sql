@@ -51,3 +51,12 @@ alter table payments add column if not exists paypal_capture_id text;
 alter table payments drop constraint if exists payments_rail_check;
 alter table payments add constraint payments_rail_check check (rail in ('solana', 'paypal'));
 alter table payments alter column reference drop not null;
+
+-- Points issuance state machine (replaces sentinel values in points_signature).
+alter table payments add column if not exists points_status text;
+alter table payments add column if not exists points_claimed_at timestamptz;
+alter table payments drop constraint if exists payments_points_status_check;
+alter table payments add constraint payments_points_status_check check (points_status in ('sending', 'issued', 'none'));
+update payments set points_status = 'none', points_signature = null where points_signature = 'none';
+update payments set points_status = null, points_signature = null, points = null where points_signature = 'pending';
+update payments set points_status = 'issued' where points_signature is not null and points_status is null;

@@ -9,7 +9,8 @@
     "migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
     "create-points-mint": "tsx --env-file-if-exists=.env scripts/create-points-mint.ts",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "tsx test/e2e/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",

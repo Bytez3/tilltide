@@ -69,6 +69,7 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
       inputSchema: z.object({ date: dateSchema, reconcile: z.boolean().optional() }),
       run: async ({ date, reconcile }) => {
         const day = date ?? todayIn(merchant.timezone)
+        if (Number.isNaN(Date.parse(`${day}T00:00:00Z`))) return 'Invalid date'
         const summary = await getDailySummary(merchant, day)
         const reconciliation = reconcile ? await reconcileDay(merchant, day) : undefined
         return JSON.stringify({ summary, reconciliation })
@@ -131,5 +132,14 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
     .map((b) => b.text)
     .join('\n')
     .trim()
+  if (!reply) {
+    return {
+      reply:
+        final.stop_reason === 'max_tokens'
+          ? 'That answer got too long. Try asking about one day or one customer.'
+          : "I couldn't finish working that out. Try a narrower question.",
+      sweeps: proposed.map(serializeSweep),
+    }
+  }
   return { reply, sweeps: proposed.map(serializeSweep) }
 }

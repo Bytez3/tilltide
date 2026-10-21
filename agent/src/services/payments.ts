@@ -1,4 +1,4 @@
-import { address, generateKeyPairSigner, type Address } from '@solana/kit'
+import { address, generateKeyPairSigner, type Address, type Signature } from '@solana/kit'
 import {
   calculatePoints,
   encodeTransferRequest,
@@ -8,8 +8,8 @@ import {
 } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
-import { approvalUrl, completedCapture, createPayPalClient, type PayPalClient } from '../paypal'
-import { getPointsAuthority, sendAndConfirm } from '../solana'
+import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
+import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { merchantToken } from './merchants'
 
 export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string) {
@@ -73,7 +73,15 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
   const paypal = getPayPal()
   if (!paypal || payment.status !== 'pending' || !payment.paypalOrderId) return false
   let order = await paypal.getOrder(payment.paypalOrderId)
-  if (order.status === 'APPROVED') order = await paypal.captureOrder(order.id)
+  if (order.status === 'APPROVED') {
+    try {
+      order = await paypal.captureOrder(order.id)
+    } catch (err) {
+      // Another request (return page vs watcher) captured it first; read the result instead.
+      if (!(err instanceof PayPalError && err.issue === 'ORDER_ALREADY_CAPTURED')) throw err
+      order = await paypal.getOrder(order.id)
+    }
+  }
   const capture = completedCapture(order)
   if (capture) {
     await sql`
@@ -94,30 +102,74 @@ export async function getPayment(id: string): Promise<PaymentRow | null> {
   return row ?? null
 }
 
+/** Records the chain's verdict. Also accepts late payments that land after a request expired. */
 export async function markPaymentResult(payment: PaymentRow, result: VerifiedPayment) {
   if (!result.ok) {
     await sql`
       update payments set status = 'failed', signature = ${result.signature}, failure_reason = ${result.reason}
-      where id = ${payment.id} and status = 'pending'`
+      where id = ${payment.id} and status in ('pending', 'expired')`
     return
   }
   await sql`
-    update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now()
-    where id = ${payment.id} and status = 'pending'`
+    update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now(),
+      failure_reason = null
+    where id = ${payment.id} and status in ('pending', 'expired')`
 }
 
 export type IssuePointsResult =
   | { issued: true; points: bigint; signature: string | null }
   | { issued: false; reason: string }
 
-/** Mints loyalty points to the payer of a paid payment. Safe to call twice: it won't issue again. */
+/** A blockhash is valid for ~150 blocks (about a minute). After this long an unconfirmed mint can't land. */
+const MINT_EXPIRY_MS = 3 * 60 * 1000
+
+/**
+ * Settles a mint that was sent but not confirmed, using the chain as the source of truth.
+ * Returns 'issued', 'retry' (the mint never landed, safe to send again) or 'wait'.
+ */
+async function settleInFlightMint(payment: PaymentRow): Promise<'issued' | 'retry' | 'wait'> {
+  const age = Date.now() - (payment.pointsClaimedAt?.getTime() ?? 0)
+  if (payment.pointsSignature) {
+    const { value } = await rpc
+      .getSignatureStatuses([payment.pointsSignature as Signature], { searchTransactionHistory: true })
+      .send()
+    const status = value[0]
+    if (status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')) {
+      await sql`update payments set points_status = 'issued' where id = ${payment.id} and points_status = 'sending'`
+      return 'issued'
+    }
+    if (status && !status.err) return 'wait'
+    if (!status && age < MINT_EXPIRY_MS) return 'wait'
+  } else if (age < MINT_EXPIRY_MS) {
+    return 'wait'
+  }
+  // Failed onchain, or never landed and its blockhash has expired: nothing was minted.
+  const reset = await sql`
+    update payments set points_status = null, points_signature = null, points_claimed_at = null
+    where id = ${payment.id} and points_status = 'sending' returning id`
+  return reset.length ? 'retry' : 'wait'
+}
+
+/**
+ * Mints loyalty points to the payer of a paid payment. Never mints twice: the row is claimed first,
+ * the signature is stored before sending, and an unconfirmed mint is only retried once the chain
+ * shows it can no longer land.
+ */
 export async function issuePointsForPayment(paymentId: string): Promise<IssuePointsResult> {
-  const payment = await getPayment(paymentId)
+  let payment = await getPayment(paymentId)
   if (!payment) return { issued: false, reason: 'Payment not found' }
   if (payment.status !== 'paid') return { issued: false, reason: `Payment is ${payment.status}, not paid` }
-  if (payment.pointsSignature) return { issued: false, reason: 'Points were already issued for this payment' }
   if (payment.rail !== 'solana') return { issued: false, reason: 'PayPal customers have no wallet to hold points yet' }
   if (!payment.payer) return { issued: false, reason: 'Payer wallet is unknown' }
+  if (payment.pointsStatus === 'issued' || payment.pointsStatus === 'none') {
+    return { issued: false, reason: 'Points were already issued for this payment' }
+  }
+  if (payment.pointsStatus === 'sending') {
+    const outcome = await settleInFlightMint(payment)
+    if (outcome === 'issued') return { issued: true, points: payment.points ?? 0n, signature: payment.pointsSignature }
+    if (outcome === 'wait') return { issued: false, reason: 'Points are being issued; the transaction is still confirming' }
+    payment = (await getPayment(paymentId))!
+  }
 
   const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
   const points = calculatePoints(payment.amount, LEDGER_DECIMALS, {
@@ -125,7 +177,7 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
     bonusMultiplier: Number(merchant!.bonusMultiplier),
   })
   if (points === 0n) {
-    await sql`update payments set points = 0, points_signature = 'none' where id = ${payment.id}`
+    await sql`update payments set points = 0, points_status = 'none' where id = ${payment.id} and points_status is null`
     return { issued: true, points: 0n, signature: null }
   }
 
@@ -133,26 +185,29 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   if (!authorityPromise || !config.pointsMint) return { issued: false, reason: 'Points mint is not configured' }
   const authority = await authorityPromise
 
-  // Claim the row first so two workers can't mint for the same payment.
+  // Claim the row so two workers can't mint for the same payment.
   const claimed = await sql`
-    update payments set points = ${points.toString()}, points_signature = 'pending'
-    where id = ${payment.id} and points_signature is null returning id`
+    update payments set points = ${points.toString()}, points_status = 'sending', points_claimed_at = now()
+    where id = ${payment.id} and points_status is null returning id`
   if (claimed.length === 0) return { issued: false, reason: 'Points are already being issued' }
 
+  const instructions = await getIssuePointsInstructions({
+    payer: authority,
+    mintAuthority: authority,
+    pointsMint: config.pointsMint,
+    customer: payment.payer as Address,
+    points,
+  })
+  const { wire, signature } = await signTransaction(authority, instructions)
+  // Stored before sending, so a crash or timeout can always be resolved against the chain.
+  await sql`update payments set points_signature = ${signature} where id = ${payment.id}`
   try {
-    const instructions = await getIssuePointsInstructions({
-      payer: authority,
-      mintAuthority: authority,
-      pointsMint: config.pointsMint,
-      customer: payment.payer as Address,
-      points,
-    })
-    const signature = await sendAndConfirm(authority, instructions)
-    await sql`update payments set points_signature = ${signature} where id = ${payment.id}`
+    await sendAndConfirmWire(wire, signature)
+    await sql`update payments set points_status = 'issued' where id = ${payment.id}`
     return { issued: true, points, signature }
   } catch (err) {
-    await sql`update payments set points = null, points_signature = null where id = ${payment.id}`
-    return { issued: false, reason: err instanceof Error ? err.message : String(err) }
+    // Left as 'sending'. settleInFlightMint decides later whether it landed.
+    return { issued: false, reason: `Points transaction not confirmed yet: ${err instanceof Error ? err.message : err}` }
   }
 }
 
@@ -170,7 +225,7 @@ export function serializePayment(p: PaymentRow) {
     payer: p.payer,
     failureReason: p.failureReason,
     points: p.points?.toString() ?? null,
-    pointsIssued: Boolean(p.pointsSignature && p.pointsSignature !== 'pending'),
+    pointsIssued: p.pointsStatus === 'issued',
     createdAt: p.createdAt.toISOString(),
     paidAt: p.paidAt?.toISOString() ?? null,
   }

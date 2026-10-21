@@ -47,7 +47,7 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
-      const created = await api.createPayment(merchant.id, amount, rail)
+      const created = await api.createPayment(merchant.id, amount.replace(/\.$/, ''), rail)
       setPayment(created)
       poll.current = setInterval(async () => {
         const latest = await api.getPayment(created.id).catch(() => null)
