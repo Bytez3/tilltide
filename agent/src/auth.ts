@@ -26,8 +26,11 @@ function field(message: string, name: string): string | null {
 
 export class AuthError extends Error {}
 
-/** Verifies a signed SIWS message and returns a new session token for the wallet. */
-export async function verifySignIn(input: { address: string; signedMessage: Uint8Array; signature: Uint8Array }) {
+/**
+ * Checks a Sign In With Solana message: the signature is the wallet's, and it was made for this site
+ * and cluster. Returns the wallet, the message text and its nonce. Nonce bookkeeping is the caller's job.
+ */
+export async function verifySiwsMessage(input: { address: string; signedMessage: Uint8Array; signature: Uint8Array }) {
   if (!isAddress(input.address)) throw new AuthError('Not a Solana address')
   if (input.signature.length !== 64) throw new AuthError('Bad signature')
   const wallet = address(input.address)
@@ -41,24 +44,29 @@ export async function verifySignIn(input: { address: string; signedMessage: Uint
 
   const message = new TextDecoder().decode(input.signedMessage)
   const header = `${config.authDomain} wants you to sign in with your Solana account:\n${wallet}`
-  if (!message.startsWith(header)) throw new AuthError('Sign-in message is for a different site or wallet')
+  if (!message.startsWith(header)) throw new AuthError('Signed message is for a different site or wallet')
 
-  // Freshness comes from the single-use nonce, not timestamps: shop phones often have the wrong clock.
+  // Freshness comes from single-use nonces, not timestamps: shop phones often have the wrong clock.
   const uri = field(message, 'URI')
   if (uri) {
     let host: string | null = null
     try {
       host = new URL(uri).host
     } catch {}
-    if (host !== config.authDomain) throw new AuthError('Sign-in message is for a different site')
+    if (host !== config.authDomain) throw new AuthError('Signed message is for a different site')
   }
   const chainId = field(message, 'Chain ID')
   if (chainId && chainId.replace(/^solana:/, '') !== config.cluster) {
-    throw new AuthError(`Sign-in message is for ${chainId}, not ${config.cluster}`)
+    throw new AuthError(`Signed message is for ${chainId}, not ${config.cluster}`)
   }
-
   const nonce = field(message, 'Nonce')
-  if (!nonce) throw new AuthError('Sign-in message has no nonce')
+  if (!nonce) throw new AuthError('Signed message has no nonce')
+  return { wallet, message, nonce }
+}
+
+/** Verifies a SIWS sign-in and returns a new session token for the wallet. */
+export async function verifySignIn(input: { address: string; signedMessage: Uint8Array; signature: Uint8Array }) {
+  const { wallet, nonce } = await verifySiwsMessage(input)
   // Single use: deleting it is the check.
   const [used] = await sql`
     delete from auth_nonces where nonce = ${nonce} and created_at > now() - ${`${NONCE_TTL_MS / 1000} seconds`}::interval

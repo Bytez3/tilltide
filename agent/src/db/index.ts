@@ -71,3 +71,20 @@ export interface SweepRow {
   error: string | null
   createdAt: Date
 }
+
+export type RefundStatus = 'proposed' | 'processing' | 'pending' | 'completed' | 'failed' | 'cancelled'
+
+export interface RefundRow {
+  id: string
+  merchantId: string
+  paymentId: string
+  /** Ledger units (6 decimals). */
+  amount: bigint
+  reason: string | null
+  status: RefundStatus
+  approvalNonce: string | null
+  paypalRefundId: string | null
+  error: string | null
+  createdAt: Date
+  approvedAt: Date | null
+}

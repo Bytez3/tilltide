@@ -61,6 +61,11 @@ export default function ActivityScreen() {
               {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
             </Text>
           )}
+          {s && s.refunds.count > 0 && (
+            <Text style={ui.muted}>
+              {s.refunds.count} refund{s.refunds.count === 1 ? '' : 's'} · net {Number(s.netTakings).toFixed(2)} USD
+            </Text>
+          )}
           {s && Number(s.byRail.paypal) > 0 && (
             <Text style={ui.muted}>
               Wallet {Number(s.byRail.solana).toFixed(2)} · PayPal {Number(s.byRail.paypal).toFixed(2)}

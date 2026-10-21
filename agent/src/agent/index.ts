@@ -3,10 +3,11 @@ import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { fromBaseUnits, toBaseUnits } from '@tilltide/agent-pay-kit'
 import { z } from 'zod'
 import { isDate } from '../dates'
-import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from '../db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from '../db'
 import { config } from '../config'
 import { merchantToken } from '../services/merchants'
 import { recordUsage } from '../services/usage'
+import { proposeRefund, serializeRefund } from '../services/refunds'
 import { issuePointsForPayment, serializePayment } from '../services/payments'
 import { getDailySummary, reconcileDay, todayIn } from '../services/summary'
 import { proposeSweep, serializeSweep } from '../services/sweeps'
@@ -23,6 +24,7 @@ Money rules:
 - You cannot move money. sweep_to_owner only creates a proposal; the owner must tap Confirm and sign in their wallet. Say so plainly, and never claim a sweep has happened.
 - Sweeps carry Tilltide's small fee (shown on the confirm card). When you propose one, say how much reaches the owner and what the fee is.
 - Only suggest a sweep when it makes sense (e.g. end of day, or the till holds a lot). Leave a float if the owner has mentioned one.
+- refund_paypal_payment only proposes a PayPal refund; the owner approves it by signing in their wallet. Confirm the payment and amount with them first, and never claim a refund has been made until it has.
 - issue_points only retries points for a paid payment that is missing them. It can't award arbitrary points.
 
 PayPal takings settle to the shop's PayPal balance, not the till wallet, so they never appear in the till's onchain balance and can't be swept. PayPal customers don't earn points yet (they have no wallet). PayPal payers show as "paypal:<id>".
@@ -36,7 +38,7 @@ export interface ChatTurn {
 }
 
 /** The agent's tools, bound to one shop. Sweeps the agent proposes are pushed onto `proposed`. */
-export function buildTools(merchant: MerchantRow, proposed: SweepRow[]) {
+export function buildTools(merchant: MerchantRow, proposed: SweepRow[], proposedRefunds: RefundRow[] = []) {
   const token = merchantToken(merchant)
   const dateSchema = z
     .string()
@@ -107,13 +109,33 @@ export function buildTools(merchant: MerchantRow, proposed: SweepRow[]) {
         }
       },
     }),
+    betaZodTool({
+      name: 'refund_paypal_payment',
+      description:
+        'Propose refunding a paid PayPal payment, in full or in part, through PayPal. Creates a proposal the owner must approve by signing with their wallet; it does not refund anything itself.',
+      inputSchema: z.object({
+        payment_id: z.string().uuid(),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional().describe('USD amount to refund, e.g. "3.50". Omit to refund what is left.'),
+        reason: z.string().max(200).describe('One line shown to the owner and sent to the customer by PayPal'),
+      }),
+      run: async ({ payment_id, amount, reason }) => {
+        try {
+          const refund = await proposeRefund(merchant, payment_id, amount ? toBaseUnits(amount, LEDGER_DECIMALS) : null, reason)
+          proposedRefunds.push(refund)
+          return JSON.stringify({ proposed: true, refund: serializeRefund(refund), next: 'Owner must approve it with their wallet.' })
+        } catch (err) {
+          return JSON.stringify({ proposed: false, error: err instanceof Error ? err.message : String(err) })
+        }
+      },
+    }),
   ]
 }
 
 export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
   const token = merchantToken(merchant)
   const proposed: SweepRow[] = []
-  const tools = buildTools(merchant, proposed)
+  const proposedRefunds: RefundRow[] = []
+  const tools = buildTools(merchant, proposed, proposedRefunds)
 
   const context = `Shop: ${merchant.name}. Timezone ${merchant.timezone}; today is ${todayIn(merchant.timezone)}. Payment token ${token.symbol}. Points rate ${merchant.pointsPerUnit} per 1 ${token.symbol}. Owner wallet ${merchant.ownerWallet ? 'is set' : 'is NOT set'}.`
 
@@ -156,7 +178,7 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
   await recordUsage(merchant, model, usage)
 
   if (final.stop_reason === 'refusal') {
-    return { reply: "Sorry, I can't help with that one.", sweeps: proposed.map(serializeSweep), usage }
+    return { reply: "Sorry, I can't help with that one.", sweeps: proposed.map(serializeSweep), refunds: proposedRefunds.map(serializeRefund), usage }
   }
   const reply = final.content
     .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
@@ -170,8 +192,9 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
           ? 'That answer got too long. Try asking about one day or one customer.'
           : "I couldn't finish working that out. Try a narrower question.",
       sweeps: proposed.map(serializeSweep),
+      refunds: proposedRefunds.map(serializeRefund),
       usage,
     }
   }
-  return { reply, sweeps: proposed.map(serializeSweep), usage }
+  return { reply, sweeps: proposed.map(serializeSweep), refunds: proposedRefunds.map(serializeRefund), usage }
 }

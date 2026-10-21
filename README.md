@@ -26,7 +26,7 @@ A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers 
 
 **Sign-in.** The merchant signs in with the till wallet using Sign In With Solana over Mobile Wallet Adapter. The API checks the signature and a one-time nonce, then issues a session token. Every shop route lives under `/shop` and only ever sees the signed-in wallet's shop.
 
-The agent (Claude, with tool use) has four tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), and `sweep_to_owner`. A sweep is only ever a **proposal**: the app shows a confirm card, and the merchant signs with Mobile Wallet Adapter. The transaction carries a `tilltide:sweep:<id>` memo. Before marking the sweep done, the backend checks that memo onchain, that it came from the till, that it went to the owner, and that the amount is right. A look-alike manual transfer never counts. Once a sweep is submitted it can't be signed again until the chain shows the first transaction can't land.
+The agent (Claude, with tool use) has five tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), `sweep_to_owner`, and `refund_paypal_payment`. A PayPal refund is also only a proposal: the owner approves it by signing the refund's exact wording with their wallet, and the server refunds through PayPal with an idempotency key, so it can never refund twice. A sweep is only ever a **proposal**: the app shows a confirm card, and the merchant signs with Mobile Wallet Adapter. The transaction carries a `tilltide:sweep:<id>` memo. Before marking the sweep done, the backend checks that memo onchain, that it came from the till, that it went to the owner, and that the amount is right. A look-alike manual transfer never counts. Once a sweep is submitted it can't be signed again until the chain shows the first transaction can't land.
 
 ## Run it locally
 
@@ -57,13 +57,13 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 25 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 26 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
 - Reconciliation: money outside the ledger is flagged.
 - Sweeps: they must come from the till, a signature can't be replayed, a look-alike manual transfer never counts, a dropped transaction is handled, and a lost signature is recovered.
-- PayPal: capture on return, capture by the watcher, a capture held for review, and expired requests.
+- PayPal: capture on return, capture by the watcher, a capture held for review, expired requests, and refunds (wallet-signed approval, forgery, over-refunding, a PayPal outage mid-refund).
 - Access: one shop can't see another's payments or sweeps.
 - Agent: its tools return real data and can't move money.
 

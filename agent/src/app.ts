@@ -14,9 +14,10 @@ import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
 import { isDate } from './dates'
-import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from './db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
+import { approveRefund, getRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
 import { beginSweep, getSweep, serializeSweep, settleSweep, submitSweep, SweepError } from './services/sweeps'
 import { checkPayment } from './services/watcher'
@@ -365,6 +366,56 @@ shop.post('/sweeps/:id/cancel', async (c) => {
     update sweeps set status = 'cancelled' where id = ${sweep.id} and status = 'proposed' returning *`
   if (!row) throw new HTTPException(400, { message: `Sweep is ${sweep.status}; only a proposal can be cancelled` })
   return c.json(serializeSweep(row))
+})
+
+shop.get('/refunds', async (c) => {
+  const merchant = await myShop(c)
+  const rows = await sql<RefundRow[]>`
+    select * from refunds where merchant_id = ${merchant.id} order by created_at desc limit 20`
+  return c.json(rows.map(serializeRefund))
+})
+
+async function myRefund(c: { get(key: 'wallet'): string; req: { param(name: 'id'): string } }) {
+  const merchant = await myShop(c)
+  const id = c.req.param('id')
+  const refund = isUuid(id) ? await getRefund(merchant, id) : null
+  if (!refund) throw new HTTPException(404, { message: 'Refund not found' })
+  return { merchant, refund }
+}
+
+/** A single-use message for the owner's wallet to sign, naming this refund and its amount. */
+shop.post('/refunds/:id/challenge', async (c) => {
+  const { merchant, refund } = await myRefund(c)
+  try {
+    return c.json(await refundChallenge(merchant, refund))
+  } catch (err) {
+    if (err instanceof RefundError) throw new HTTPException(409, { message: err.message })
+    throw err
+  }
+})
+
+/** Approve with the signed challenge. Also retries a refund stuck in 'processing' (idempotently). */
+shop.post('/refunds/:id/approve', async (c) => {
+  const { merchant, refund } = await myRefund(c)
+  const input = await body(c, z.object({ signedMessage: z.base64().max(4000).optional(), signature: z.base64().max(200).optional() }))
+  try {
+    const signed =
+      input.signedMessage && input.signature
+        ? { signedMessage: new Uint8Array(Buffer.from(input.signedMessage, 'base64')), signature: new Uint8Array(Buffer.from(input.signature, 'base64')) }
+        : null
+    return c.json(serializeRefund(await approveRefund(merchant, refund, signed)))
+  } catch (err) {
+    if (err instanceof RefundError) throw new HTTPException(409, { message: err.message })
+    throw err
+  }
+})
+
+shop.post('/refunds/:id/cancel', async (c) => {
+  const { refund } = await myRefund(c)
+  const [row] = await sql<RefundRow[]>`
+    update refunds set status = 'cancelled', approval_nonce = null where id = ${refund.id} and status = 'proposed' returning *`
+  if (!row) throw new HTTPException(409, { message: `Refund is ${refund.status}; only a proposal can be cancelled` })
+  return c.json(serializeRefund(row))
 })
 
 app.route('/shop', shop)

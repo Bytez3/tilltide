@@ -85,7 +85,8 @@ function mintAccountFile(dir: string, mint: Address, authority: Address): string
 function startMockPayPal(port: number) {
   const orders = new Map<string, any>()
   let n = 0
-  const state = { holdForReview: false, captures: 0 }
+  const state = { holdForReview: false, captures: 0, refundCalls: 0, failNextRefund: false }
+  const refundsByRequestId = new Map<string, any>()
   const server = createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += chunk
@@ -107,6 +108,20 @@ function startMockPayPal(port: number) {
       orders.set(id, order)
       return send(201, order)
     }
+    const refundMatch = url.pathname.match(/^\/v2\/payments\/captures\/([^/]+)\/refund$/)
+    if (req.method === 'POST' && refundMatch) {
+      state.refundCalls++
+      if (state.failNextRefund) {
+        state.failNextRefund = false
+        return send(503, { message: 'Service unavailable' })
+      }
+      // Real PayPal returns the original refund for a repeated PayPal-Request-Id.
+      const requestId = String(req.headers['paypal-request-id'])
+      if (!refundsByRequestId.has(requestId)) {
+        refundsByRequestId.set(requestId, { id: `REFUND${refundsByRequestId.size + 1}`, status: 'COMPLETED', amount: JSON.parse(body).amount, capture: refundMatch[1] })
+      }
+      return send(201, refundsByRequestId.get(requestId))
+    }
     const m = url.pathname.match(/^\/v2\/checkout\/orders\/([^/]+)(\/capture)?$/)
     const order = m && orders.get(m[1]!)
     if (!order) return send(404, { message: 'not found' })
@@ -127,6 +142,7 @@ function startMockPayPal(port: number) {
     approve: (id: string) => (orders.get(id).status = 'APPROVED'),
     releaseReview: (id: string) => (orders.get(id).purchase_units[0].payments.captures[0].status = 'COMPLETED'),
     order: (id: string) => orders.get(id),
+    refunds: () => [...refundsByRequestId.values()],
     close: () => server.close(),
   }
 }
@@ -744,6 +760,59 @@ async function main() {
       assert.deepEqual(body.summary.byRail, { solana: '9.75', paypal: '30.25' })
     })
 
+    await step('PayPal refunds: agent proposes, owner approves with a wallet signature, PayPal refunds exactly once', async () => {
+      const { buildTools } = await import('../../src/agent')
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      const refunds: any[] = []
+      const tools = Object.fromEntries(buildTools(merchant, [], refunds).map((t) => [t.name, t]))
+      const run = (input: unknown) => (tools.refund_paypal_payment as any).run(tools.refund_paypal_payment!.parse(input)).then(JSON.parse)
+      const creamTea = (await sql<any[]>`select id from payments where label = 'Cream tea'`)[0].id
+      const solanaPayment = firstPaymentId
+
+      assert.match((await run({ payment_id: solanaPayment, reason: 'x' })).error, /Only PayPal payments/)
+      assert.match((await run({ payment_id: creamTea, amount: '8.00', reason: 'x' })).error, /Only 7.25 USD/)
+      const proposal = await run({ payment_id: creamTea, amount: '2.00', reason: 'Scone was cold' })
+      assert.equal(proposal.proposed, true)
+      assert.equal(proposal.refund.status, 'proposed')
+      assert.equal(paypal.refunds().length, 0, 'proposing refunds nothing')
+      const id = proposal.refund.id
+
+      const sign = async (signer: KeyPairSigner, statement: string, nonce: string) => {
+        const msg = new TextEncoder().encode(
+          `tilltide.test wants you to sign in with your Solana account:\n${signer.address}\n\n${statement}\n\nURI: https://tilltide.test\nVersion: 1\nChain ID: solana:devnet\nNonce: ${nonce}`,
+        )
+        return { signedMessage: Buffer.from(msg).toString('base64'), signature: Buffer.from(await signBytes(signer.keyPair.privateKey, msg)).toString('base64') }
+      }
+
+      // No signature, a stolen-session forgery, and a signature for different wording are all refused.
+      assert.equal((await api('POST', `/shop/refunds/${id}/approve`, {}, tillToken)).status, 409)
+      let ch = (await api('POST', `/shop/refunds/${id}/challenge`, undefined, tillToken)).body
+      assert.match(ch.statement, /Approve a PayPal refund of 2.00 USD for "Cream tea"/)
+      assert.equal((await api('POST', `/shop/refunds/${id}/approve`, await sign(customer, ch.statement, ch.nonce), tillToken)).status, 409)
+      ch = (await api('POST', `/shop/refunds/${id}/challenge`, undefined, tillToken)).body
+      assert.equal((await api('POST', `/shop/refunds/${id}/approve`, await sign(till, ch.statement.replace('2.00', '20.00'), ch.nonce), tillToken)).status, 409)
+      assert.equal(paypal.refunds().length, 0)
+
+      // PayPal is down at the moment of approval: the refund waits in 'processing', then a retry
+      // completes it with the same idempotency key, so the customer is refunded once.
+      ch = (await api('POST', `/shop/refunds/${id}/challenge`, undefined, tillToken)).body
+      paypal.state.failNextRefund = true
+      const approval = await sign(till, ch.statement, ch.nonce)
+      const first = await api('POST', `/shop/refunds/${id}/approve`, approval, tillToken)
+      assert.equal(first.body.status, 'processing')
+      assert.equal((await api('POST', `/shop/refunds/${id}/approve`, approval, tillToken)).body.status, 'completed')
+      assert.equal((await api('POST', `/shop/refunds/${id}/approve`, {}, tillToken)).body.status, 'completed')
+      assert.equal(paypal.refunds().length, 1)
+      assert.deepEqual(paypal.refunds()[0].amount, { value: '2.00', currency_code: 'USD' })
+      assert.equal(paypal.refunds()[0].capture, 'CAP-ORDER1')
+
+      // The rest can still be refunded, but no more than that.
+      assert.match((await run({ payment_id: creamTea, amount: '5.26', reason: 'x' })).error, /Only 5.25 USD/)
+      const { body } = await api('GET', '/shop/summary', undefined, tillToken)
+      assert.deepEqual(body.summary.refunds, { count: 1, total: '2' })
+      assert.equal(body.summary.netTakings, String(Number(body.summary.takings) - 2))
+    })
+
     await step("agent tools return real data and can't move money", async () => {
       const { buildTools } = await import('../../src/agent')
       // The PYUSD till was swept empty above; switch back to USDC, which still holds a balance.
@@ -751,7 +820,7 @@ async function main() {
       const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
       const proposed: any[] = []
       const tools = Object.fromEntries(buildTools(merchant, proposed).map((t) => [t.name, t]))
-      assert.deepEqual(Object.keys(tools).sort(), ['get_daily_summary', 'get_payments', 'issue_points', 'sweep_to_owner'])
+      assert.deepEqual(Object.keys(tools).sort(), ['get_daily_summary', 'get_payments', 'issue_points', 'refund_paypal_payment', 'sweep_to_owner'])
       const run = (name: string, input: unknown) => (tools[name] as any).run(tools[name]!.parse(input))
 
       const payments = JSON.parse(await run('get_payments', { status: 'paid', rail: 'paypal' }))

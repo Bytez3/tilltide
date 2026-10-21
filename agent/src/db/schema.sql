@@ -103,3 +103,20 @@ create table if not exists agent_usage (
 -- Platform fee on sweeps (part of the gross amount, paid to the treasury in the same transaction).
 alter table sweeps add column if not exists fee_amount bigint not null default 0;
 alter table sweeps add column if not exists fee_wallet text;
+
+-- PayPal refunds: the agent proposes, the owner approves with a wallet signature, the server refunds.
+create table if not exists refunds (
+  id uuid primary key default gen_random_uuid(),
+  merchant_id uuid not null references merchants(id),
+  payment_id uuid not null references payments(id),
+  amount bigint not null check (amount > 0),
+  reason text,
+  status text not null default 'proposed'
+    check (status in ('proposed', 'processing', 'pending', 'completed', 'failed', 'cancelled')),
+  approval_nonce text,
+  paypal_refund_id text,
+  error text,
+  created_at timestamptz not null default now(),
+  approved_at timestamptz
+);
+create index if not exists refunds_payment on refunds (payment_id);

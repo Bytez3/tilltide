@@ -39,12 +39,21 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     .slice(0, 5)
     .map(([wallet, c]) => ({ wallet, total: fromBaseUnits(c.total, token.decimals), visits: c.visits }))
 
+  const [refunded] = await sql<{ total: bigint | null; count: number }[]>`
+    select sum(amount)::bigint as total, count(*)::int as count from refunds
+    where merchant_id = ${merchant.id} and status in ('pending', 'completed')
+      and approved_at >= (${date}::date::timestamp at time zone ${merchant.timezone})
+      and approved_at < ((${date}::date + 1)::timestamp at time zone ${merchant.timezone})`
+  const refundsTotal = refunded?.total ?? 0n
+
   return {
     date,
     timezone: merchant.timezone,
     // Every rail is in US dollars 1:1 (USDC, PYUSD, PayPal USD), so the total is in USD.
     token: 'USD',
     takings: fromBaseUnits(total, token.decimals),
+    refunds: { count: refunded?.count ?? 0, total: fromBaseUnits(refundsTotal, token.decimals) },
+    netTakings: fromBaseUnits(total - refundsTotal, token.decimals),
     paidCount: paid.length,
     averageSale: paid.length ? fromBaseUnits(total / BigInt(paid.length), token.decimals) : '0',
     uniqueCustomers: byCustomer.size,

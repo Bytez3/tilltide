@@ -48,6 +48,16 @@ describe('PayPal client', () => {
     expect(body.payment_source.paypal.experience_context).toMatchObject({ user_action: 'PAY_NOW', shipping_preference: 'NO_SHIPPING' })
   })
 
+  it('refunds a capture idempotently with the amount and a note', async () => {
+    const { impl, calls } = fakeFetch({ 'POST /v2/payments/captures/CAP1/refund': { id: 'R1', status: 'COMPLETED' } })
+    const paypal = createPayPalClient(config, impl)
+    const refund = await paypal.refundCapture('CAP1', { value: '7.25', currency: 'USD' }, 'refund-abc', 'Sorry, wrong order')
+    expect(refund).toEqual({ id: 'R1', status: 'COMPLETED' })
+    const call = calls.at(-1)!
+    expect((call.init.headers as Record<string, string>)['paypal-request-id']).toBe('refund-abc')
+    expect(JSON.parse(call.init.body as string)).toEqual({ amount: { value: '7.25', currency_code: 'USD' }, note_to_payer: 'Sorry, wrong order' })
+  })
+
   it('reuses the access token across calls', async () => {
     const { impl, calls } = fakeFetch({ 'GET /v2/checkout/orders/A': { id: 'A', status: 'CREATED' } })
     const paypal = createPayPalClient(config, impl)

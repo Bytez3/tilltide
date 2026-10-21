@@ -51,6 +51,17 @@ export interface Sweep {
   error: string | null
 }
 
+export interface Refund {
+  id: string
+  paymentId: string
+  amount: string
+  display: string
+  currency: string
+  reason: string | null
+  status: 'proposed' | 'processing' | 'pending' | 'completed' | 'failed' | 'cancelled'
+  error: string | null
+}
+
 export interface DailySummary {
   date: string
   token: string
@@ -61,6 +72,8 @@ export interface DailySummary {
   topCustomers: { wallet: string; total: string; visits: number }[]
   pointsIssued: string
   stillPending: number
+  refunds: { count: number; total: string }
+  netTakings: string
   byRail: { solana: string; paypal: string }
 }
 
@@ -125,7 +138,13 @@ export const api = {
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
-  chat: (messages: ChatTurn[]) => request<{ reply: string; sweeps: Sweep[] }>('/shop/chat', post({ messages })),
+  chat: (messages: ChatTurn[]) =>
+    request<{ reply: string; sweeps: Sweep[]; refunds: Refund[] }>('/shop/chat', post({ messages })),
+
+  refundChallenge: (id: string) => request<{ nonce: string; domain: string; statement: string }>(`/shop/refunds/${id}/challenge`, post()),
+  approveRefund: (id: string, signedMessage?: string, signature?: string) =>
+    request<Refund>(`/shop/refunds/${id}/approve`, post(signedMessage && signature ? { signedMessage, signature } : {})),
+  cancelRefund: (id: string) => request<Refund>(`/shop/refunds/${id}/cancel`, post()),
 
   beginSweep: (id: string, lastValidBlockHeight: bigint) =>
     request<Sweep>(`/shop/sweeps/${id}/begin`, post({ lastValidBlockHeight: lastValidBlockHeight.toString() })),

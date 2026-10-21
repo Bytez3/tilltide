@@ -5,7 +5,8 @@ import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { useSignSweep } from '@/features/sweep/use-sweep'
-import { api, ChatTurn, Sweep } from '@/lib/api'
+import { api, ChatTurn, Refund, Sweep } from '@/lib/api'
+import { useApproveRefund } from '@/features/refund/use-approve-refund'
 import { shortAddress } from '@/lib/format'
 
 /** The API takes up to 40 turns of 4000 characters; keep the most recent and cut long ones. */
@@ -25,6 +26,8 @@ export default function AgentScreen() {
   const signSweep = useSignSweep(merchant)
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [sweep, setSweep] = useState<Sweep | null>(null)
+  const [refund, setRefund] = useState<Refund | null>(null)
+  const approveRefund = useApproveRefund()
   const [draft, setDraft] = useState('')
   const [thinking, setThinking] = useState(false)
   const [signing, setSigning] = useState(false)
@@ -47,7 +50,8 @@ export default function AgentScreen() {
     setThinking(true)
     setError(null)
     try {
-      const { reply, sweeps } = await api.chat(forApi(next))
+      const { reply, sweeps, refunds } = await api.chat(forApi(next))
+      if (refunds.length) setRefund(refunds.at(-1)!)
       setTurns([...next, { role: 'assistant', content: reply }])
       if (sweeps.length) setSweep(sweeps.at(-1)!)
     } catch (e) {
@@ -70,6 +74,28 @@ export default function AgentScreen() {
       setSweep(await api.checkSweep(sweep.id).catch(() => sweep))
     } finally {
       setSigning(false)
+    }
+  }
+
+  async function onApproveRefund() {
+    if (!refund) return
+    setSigning(true)
+    setError(null)
+    try {
+      setRefund(await approveRefund(refund))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSigning(false)
+    }
+  }
+
+  async function onCancelRefund() {
+    if (!refund) return
+    try {
+      setRefund(await api.cancelRefund(refund.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -159,6 +185,42 @@ export default function AgentScreen() {
             ) : (
               <Text style={{ color: sweep.status === 'confirmed' ? colors.paid : colors.muted, fontWeight: '600' }}>
                 {sweep.status === 'confirmed' ? 'Sent ✓' : 'Cancelled'}
+              </Text>
+            )}
+          </View>
+        )}
+        {refund && (
+          <View style={[ui.card, { borderColor: colors.sea, borderWidth: 1 }]}>
+            <Text style={ui.muted}>Proposed PayPal refund</Text>
+            <Text style={ui.h1}>
+              {refund.display} {refund.currency}
+            </Text>
+            {refund.reason && <Text style={ui.muted}>{refund.reason}</Text>}
+            {refund.error && <Text style={[ui.muted, { color: colors.warn }]}>{refund.error}</Text>}
+            {refund.status === 'proposed' || refund.status === 'processing' ? (
+              <View style={ui.row}>
+                {refund.status === 'proposed' && <Button title="Cancel" variant="secondary" onPress={onCancelRefund} style={{ flex: 1 }} />}
+                <Button
+                  title={refund.status === 'processing' ? 'Retry refund' : 'Approve with wallet'}
+                  onPress={onApproveRefund}
+                  loading={signing}
+                  style={{ flex: 2 }}
+                />
+              </View>
+            ) : (
+              <Text
+                style={{
+                  color: refund.status === 'completed' ? colors.paid : refund.status === 'failed' ? colors.danger : colors.muted,
+                  fontWeight: '600',
+                }}
+              >
+                {refund.status === 'completed'
+                  ? 'Refunded ✓'
+                  : refund.status === 'pending'
+                    ? 'PayPal is processing the refund'
+                    : refund.status === 'failed'
+                      ? 'Refund failed'
+                      : 'Cancelled'}
               </Text>
             )}
           </View>

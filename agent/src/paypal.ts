@@ -24,6 +24,12 @@ export interface PayPalOrder {
   }[]
 }
 
+export interface PayPalRefund {
+  id: string
+  status: 'CANCELLED' | 'FAILED' | 'PENDING' | 'COMPLETED'
+  amount?: { currency_code: string; value: string }
+}
+
 export class PayPalError extends Error {
   constructor(
     message: string,
@@ -111,6 +117,18 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
         `create-${input.referenceId}`,
       ),
     getOrder: (id: string) => call<PayPalOrder>('GET', `/v2/checkout/orders/${encodeURIComponent(id)}`),
+    /**
+     * Refunds all or part of a capture. `requestId` makes it idempotent: retrying with the same id
+     * returns the original refund instead of refunding twice.
+     */
+    refundCapture: (captureId: string, amount: { value: string; currency: string }, requestId: string, noteToPayer?: string) =>
+      call<PayPalRefund>(
+        'POST',
+        `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`,
+        { amount: { value: amount.value, currency_code: amount.currency }, ...(noteToPayer ? { note_to_payer: noteToPayer.slice(0, 255) } : {}) },
+        requestId,
+      ),
+    getRefund: (id: string) => call<PayPalRefund>('GET', `/v2/payments/refunds/${encodeURIComponent(id)}`),
     captureOrder: (id: string) =>
       call<PayPalOrder>('POST', `/v2/checkout/orders/${encodeURIComponent(id)}/capture`, {}, `capture-${id}`),
   }

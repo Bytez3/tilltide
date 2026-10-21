@@ -1,9 +1,10 @@
 import { address } from '@solana/kit'
 import { findPayment } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
-import { sql, type MerchantRow, type PaymentRow } from '../db'
+import { sql, type MerchantRow, type PaymentRow, type RefundRow } from '../db'
 import { rpc } from '../solana'
-import { checkPayPalPayment, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
+import { checkPayPalPayment, getPayPal, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
+import { executeRefund } from './refunds'
 
 /** Per payment: reference transactions already known not to be a valid payment (see findPayment). */
 const rejectedByPayment = new Map<string, Set<string>>()
@@ -78,6 +79,27 @@ async function tick() {
     for (const id of rejectedByPayment.keys()) {
       const [row] = await sql`select 1 from payments where id = ${id} and created_at > now() - interval '24 hours' and status <> 'paid'`
       if (!row) rejectedByPayment.delete(id)
+    }
+
+    // PayPal refunds: retry ones interrupted mid-call (idempotent), and follow PENDING ones to the end.
+    if (getPayPal()) {
+      const open = await sql<RefundRow[]>`
+        select * from refunds where status in ('processing', 'pending') and approved_at > now() - interval '30 days' limit 20`
+      for (const refund of open) {
+        try {
+          if (refund.status === 'processing') await executeRefund(refund)
+          else if (refund.paypalRefundId) {
+            const r = await getPayPal()!.getRefund(refund.paypalRefundId)
+            if (r.status !== 'PENDING') {
+              await sql`update refunds set status = ${r.status === 'COMPLETED' ? 'completed' : 'failed'},
+                error = ${r.status === 'COMPLETED' ? null : `PayPal says ${r.status.toLowerCase()}`}
+                where id = ${refund.id} and status = 'pending'`
+            }
+          }
+        } catch (err) {
+          console.error(`Refund ${refund.id} follow-up failed`, err)
+        }
+      }
     }
 
     // Retry points that failed or never confirmed. issuePointsForPayment checks the chain before resending.
