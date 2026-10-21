@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { Button } from '@/components/ui'
-import { colors, ui } from '@/constants/theme'
+import { colors, fonts, ui } from '@/constants/theme'
 import { useApproveRefund } from '@/features/refund/use-approve-refund'
 import { api, Refund } from '@/lib/api'
 import { currencySymbol } from '@/lib/format'
@@ -75,7 +75,7 @@ export function RefundCard({
         <Text
           style={{
             color: refund.status === 'completed' ? colors.paid : refund.status === 'failed' ? colors.danger : colors.muted,
-            fontWeight: '600',
+            fontFamily: fonts.semibold,
           }}
         >
           {refund.status === 'completed'

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { Button } from '@/components/ui'
-import { colors, ui } from '@/constants/theme'
+import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { useSignSweep } from '@/features/sweep/use-sweep'
 import { api, Sweep } from '@/lib/api'
@@ -91,14 +91,14 @@ export function SweepCard({
           {!signing && <Button title="Check again" variant="secondary" onPress={checkAgain} />}
         </View>
       ) : sweep.status === 'failed' ? (
-        <Text style={{ color: colors.danger, fontWeight: '600' }}>Needs checking. Do not sign again; contact support.</Text>
+        <Text style={{ color: colors.danger, fontFamily: fonts.semibold }}>Needs checking. Do not sign again; contact support.</Text>
       ) : sweep.status === 'proposed' ? (
         <View style={ui.row}>
           <Button title="Cancel" variant="secondary" onPress={cancel} style={{ flex: 1 }} />
           <Button title="Confirm & sign" onPress={confirm} loading={signing} style={{ flex: 2 }} />
         </View>
       ) : (
-        <Text style={{ color: sweep.status === 'confirmed' ? colors.paid : colors.muted, fontWeight: '600' }}>
+        <Text style={{ color: sweep.status === 'confirmed' ? colors.paid : colors.muted, fontFamily: fonts.semibold }}>
           {sweep.status === 'confirmed' ? 'Sent ✓' : 'Cancelled'}
         </Text>
       )}

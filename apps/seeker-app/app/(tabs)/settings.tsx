@@ -1,9 +1,9 @@
 import { isAddress } from '@solana/kit'
 import { useEffect, useState } from 'react'
-import { Linking, Pressable, ScrollView, Text, View } from 'react-native'
+import { Linking, ScrollView, Text, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
-import { Button, Input } from '@/components/ui'
-import { colors, ui } from '@/constants/theme'
+import { Button, Input, Segmented } from '@/components/ui'
+import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api } from '@/lib/api'
 import { AppConfig } from '@/constants/app-config'
@@ -169,34 +169,10 @@ export default function SettingsScreen() {
           </Text>
 
           <Text style={[ui.body, { marginTop: 8 }]}>Prices in</Text>
-          <View style={ui.row}>
-            {(['GBP', 'EUR', 'USD'] as const).map((c) => (
-              <Pressable
-                key={c}
-                onPress={() => setCurrency(c)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: currency === c }}
-                style={[ui.input, { flex: 1, alignItems: 'center' }, currency === c && { borderColor: colors.sea, borderWidth: 2 }]}
-              >
-                <Text style={[ui.body, { fontWeight: '600' }]}>{c}</Text>
-              </Pressable>
-            ))}
-          </View>
+          <Segmented options={(['GBP', 'EUR', 'USD'])} value={currency} onChange={setCurrency} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Wallet payments in</Text>
-          <View style={ui.row}>
-            {(['USDC', 'PYUSD'] as const).map((t) => (
-              <Pressable
-                key={t}
-                onPress={() => setToken(t)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: token === t }}
-                style={[ui.input, { flex: 1, alignItems: 'center' }, token === t && { borderColor: colors.sea, borderWidth: 2 }]}
-              >
-                <Text style={[ui.body, { fontWeight: '600' }]}>{t}</Text>
-              </Pressable>
-            ))}
-          </View>
+          <Segmented options={(['USDC', 'PYUSD'])} value={token} onChange={setToken} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Points per {currencySymbol(currency)}1 spent</Text>
           <Input keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
@@ -207,19 +183,7 @@ export default function SettingsScreen() {
           <Input keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Seeker owners earn</Text>
-          <View style={ui.row}>
-            {[1, 1.5, 2, 3].map((m) => (
-              <Pressable
-                key={m}
-                onPress={() => setSeekerBonus(m)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: seekerBonus === m }}
-                style={[ui.input, { flex: 1, alignItems: 'center' }, seekerBonus === m && { borderColor: colors.sea, borderWidth: 2 }]}
-              >
-                <Text style={[ui.body, { fontWeight: '600' }]}>{m === 1 ? 'Off' : `×${m}`}</Text>
-              </Pressable>
-            ))}
-          </View>
+          <Segmented options={[1, 1.5, 2, 3]} value={seekerBonus} onChange={setSeekerBonus} label={(m) => (m === 1 ? 'Off' : `×${m}`)} />
           <Text style={ui.muted}>Extra points for customers paying from a Solana Seeker phone (Seeker Genesis Token or SKR).</Text>
 
           <Text style={[ui.body, { marginTop: 8 }]}>Closing time (end-of-day report)</Text>
@@ -242,7 +206,7 @@ export default function SettingsScreen() {
           {staffList.map((d) => (
             <View key={d.id} style={[ui.row, { justifyContent: 'space-between' }]}>
               <Text style={ui.body}>{d.label}</Text>
-              <Text style={{ color: colors.danger, fontWeight: '600' }} onPress={() => removeStaff(d.id)}>
+              <Text style={{ color: colors.danger, fontFamily: fonts.semibold }} onPress={() => removeStaff(d.id)}>
                 Remove
               </Text>
             </View>
@@ -267,7 +231,7 @@ export default function SettingsScreen() {
           <Text style={ui.h2}>PayPal</Text>
           {merchant.paypal.status === 'connected' ? (
             <>
-              <Text style={{ color: colors.paid, fontWeight: '700', fontSize: 15 }}>Connected ✓</Text>
+              <Text style={{ color: colors.paid, fontFamily: fonts.bold, fontSize: 15 }}>Connected ✓</Text>
               <Text style={ui.muted}>PayPal sales go straight to your PayPal account.</Text>
             </>
           ) : (

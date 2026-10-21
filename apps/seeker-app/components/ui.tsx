@@ -1,5 +1,5 @@
-import { ActivityIndicator, Pressable, StyleProp, Text, TextInput, TextInputProps, ViewStyle } from 'react-native'
-import { colors, ui } from '@/constants/theme'
+import { ActivityIndicator, Pressable, StyleProp, Text, TextInput, TextInputProps, View, ViewStyle } from 'react-native'
+import { colors, fonts, ui } from '@/constants/theme'
 
 /** A text field with a clearly lighter placeholder, so hints never look like typed values. */
 export function Input({ style, ...props }: TextInputProps) {
@@ -44,7 +44,7 @@ export function Button({
       {loading ? (
         <ActivityIndicator color={primary ? colors.seaInk : colors.sea} />
       ) : (
-        <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: primary ? colors.seaInk : colors.ink, fontSize: 16, fontWeight: '600' }}>{title}</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: primary ? colors.seaInk : colors.ink, fontSize: 16, fontFamily: fonts.semibold }}>{title}</Text>
       )}
     </Pressable>
   )
@@ -67,7 +67,64 @@ export function Chip({ label, onPress, selected }: { label: string; onPress: () 
         opacity: pressed ? 0.8 : 1,
       })}
     >
-      <Text style={{ color: selected ? colors.seaInk : colors.sea, fontWeight: '600', fontSize: 14 }}>{label}</Text>
+      <Text style={{ color: selected ? colors.seaInk : colors.sea, fontFamily: fonts.semibold, fontSize: 14 }}>{label}</Text>
     </Pressable>
+  )
+}
+
+/** One choice from a few options, as a single rounded bar with the chosen option filled. */
+export function Segmented<T extends string | number>({
+  options,
+  value,
+  onChange,
+  label = (o) => String(o),
+  stretch = true,
+}: {
+  options: readonly T[]
+  value: T
+  onChange: (value: T) => void
+  label?: (option: T) => string
+  stretch?: boolean
+}) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        backgroundColor: colors.line,
+        borderRadius: 12,
+        padding: 3,
+        gap: 3,
+        alignSelf: stretch ? 'stretch' : 'flex-start',
+      }}
+    >
+      {options.map((option) => {
+        const selected = option === value
+        return (
+          <Pressable
+            key={String(option)}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            onPress={() => onChange(option)}
+            style={{
+              flex: stretch ? 1 : undefined,
+              alignItems: 'center',
+              paddingVertical: 9,
+              paddingHorizontal: 16,
+              borderRadius: 9,
+              backgroundColor: selected ? colors.card : 'transparent',
+              shadowColor: '#000',
+              shadowOpacity: selected ? 0.08 : 0,
+              shadowRadius: 3,
+              shadowOffset: { width: 0, height: 1 },
+              elevation: selected ? 1 : 0,
+            }}
+          >
+            <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 15, color: selected ? colors.sea : colors.muted }}>
+              {label(option)}
+            </Text>
+          </Pressable>
+        )
+      })}
+    </View>
   )
 }

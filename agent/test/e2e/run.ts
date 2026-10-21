@@ -1045,7 +1045,9 @@ async function main() {
       const receipt = await fetch(`${API}/r/${creamTea}`).then((r) => r.text())
       const code = receipt.match(/<strong[^>]*>([A-Z0-9]{5}-[A-Z0-9]{5})<\/strong>/)?.[1]
       assert.ok(code, 'receipt shows a loyalty code')
-      assert.match(receipt, /Your points at Pasty Shop/)
+      assert.match(receipt, /class="shop">Pasty Shop</)
+      assert.match(receipt, /Your points/)
+      assert.match(receipt, /off your next visit/)
       const { ledgerBalance } = await import('../../src/services/paypal-loyalty')
       const shopId = (await api('GET', '/shop', undefined, tillToken)).body.id
       const before = await ledgerBalance(shopId, 'paypal:BUYER1')
@@ -1135,7 +1137,7 @@ async function main() {
       const paid = await waitFor(tillToken, sale.body.id, (p) => p.status === 'paid' && p.pointsIssued, 'seeker sale')
       assert.equal(paid.points, '6', '3 points x2')
       assert.equal(paid.seekerBonus, true)
-      assert.match(await fetch(`${API}/r/${sale.body.id}`).then((r) => r.text()), /Seeker bonus applied/)
+      assert.match(await fetch(`${API}/r/${sale.body.id}`).then((r) => r.text()), /· Seeker bonus/)
       assert.equal((await api('PATCH', '/shop', { seekerBonus: 5 }, tillToken)).status, 400, 'at most x3')
       await api('PATCH', '/shop', { seekerBonus: 1 }, tillToken)
     })

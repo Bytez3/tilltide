@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons'
 import { Tabs } from 'expo-router'
+import { Text } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { colors } from '@/constants/theme'
+import { BrandTitle } from '@/components/brand'
+import { colors, fonts } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 
 type IconName = keyof typeof Ionicons.glyphMap
@@ -13,7 +15,7 @@ const tab = (title: string, icon: IconName) => ({
 
 export default function TabsLayout() {
   // Staff devices take payments only: no agent (it can propose moving money).
-  const { isStaff } = useMerchant()
+  const { merchant, isStaff } = useMerchant()
   const insets = useSafeAreaInsets()
   return (
     <Tabs
@@ -21,8 +23,16 @@ export default function TabsLayout() {
         tabBarActiveTintColor: colors.sea,
         // The default bar squeezes the label box below its line height, which clips descenders (g, y).
         tabBarStyle: { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom },
-        tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
+        tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontFamily: fonts.medium },
         headerStyle: { backgroundColor: colors.bg },
+        headerTitleAlign: 'left',
+        headerTitle: ({ children }) => <BrandTitle title={children} />,
+        headerRight: () =>
+          merchant ? (
+            <Text numberOfLines={1} style={{ fontFamily: fonts.semibold, fontSize: 13, color: colors.muted, marginRight: 16, maxWidth: 160 }}>
+              {merchant.name}
+            </Text>
+          ) : null,
         headerShadowVisible: false,
         sceneStyle: { backgroundColor: colors.bg },
       }}

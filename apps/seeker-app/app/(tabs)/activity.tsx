@@ -5,7 +5,7 @@ import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
 import { Button, Input } from '@/components/ui'
-import { colors, ui } from '@/constants/theme'
+import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Refund, Sweep } from '@/lib/api'
 import { currencySymbol, formatDay, formatMoney, shortAddress } from '@/lib/format'
@@ -201,10 +201,10 @@ export default function ActivityScreen() {
             </Text>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            <Text style={{ color: STATUS_COLOUR[item.status], fontWeight: '600', textTransform: 'capitalize' }}>{item.status}</Text>
+            <Text style={{ color: STATUS_COLOUR[item.status], fontFamily: fonts.semibold, textTransform: 'capitalize' }}>{item.status}</Text>
             {!isStaff && item.rail === 'paypal' && item.status === 'paid' && (
               <Pressable accessibilityRole="button" onPress={() => startRefund(item)}>
-                <Text style={{ color: colors.sea, fontWeight: '600' }}>Refund</Text>
+                <Text style={{ color: colors.sea, fontFamily: fonts.semibold }}>Refund</Text>
               </Pressable>
             )}
           </View>

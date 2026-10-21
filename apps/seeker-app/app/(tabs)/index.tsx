@@ -5,8 +5,8 @@ import * as Haptics from 'expo-haptics'
 import { GettingStarted } from '@/components/getting-started'
 import { PaidTick } from '@/components/paid-tick'
 import { SetupCard } from '@/components/setup-card'
-import { Button, Chip, Input } from '@/components/ui'
-import { colors, ui } from '@/constants/theme'
+import { Button, Chip, Input, Segmented } from '@/components/ui'
+import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Rail } from '@/lib/api'
 import { currencySymbol, formatAmount, formatMoney } from '@/lib/format'
@@ -138,7 +138,7 @@ export default function ChargeScreen() {
             <Text style={ui.h2}>Receipt and points</Text>
             <Text style={ui.muted}>Customer scans this with their phone camera.</Text>
             {AppConfig.sandbox && (
-              <Text style={{ color: colors.sea, fontWeight: '600' }} onPress={() => Linking.openURL(receiptUrl)}>
+              <Text style={{ color: colors.sea, fontFamily: fonts.semibold }} onPress={() => Linking.openURL(receiptUrl)}>
                 Open receipt
               </Text>
             )}
@@ -219,26 +219,14 @@ export default function ChargeScreen() {
   return (
     <ScrollView style={ui.screen} contentContainerStyle={ui.content} keyboardShouldPersistTaps="handled">
       <GettingStarted />
-      <View style={[ui.row, { justifyContent: 'space-between' }]}>
-        <Text style={ui.muted}>{merchant.name}</Text>
-        {merchant.paypalEnabled && (
-          <View style={[ui.row, { gap: 0, borderRadius: 10, borderWidth: 1, borderColor: colors.line, overflow: 'hidden' }]}>
-            {(['paypal', 'solana'] as const).map((r) => (
-              <Pressable
-                key={r}
-                onPress={() => setRail(r)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: activeRail === r }}
-                style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: activeRail === r ? colors.sea : colors.card }}
-              >
-                <Text style={{ color: activeRail === r ? colors.seaInk : colors.ink, fontWeight: '600' }}>
-                  {r === 'solana' ? 'Wallet' : 'PayPal'}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
-      </View>
+      {merchant.paypalEnabled && (
+        <Segmented
+          options={['paypal', 'solana'] as const}
+          value={activeRail}
+          onChange={setRail}
+          label={(r) => (r === 'solana' ? 'Wallet' : 'PayPal')}
+        />
+      )}
       {paypalNotConnected && (
         <Text style={[ui.muted, { color: colors.warn }]}>
           {isStaff ? 'PayPal is not set up yet. Ask the owner to connect PayPal, or take a wallet payment.' : 'Connect your PayPal in Settings to take PayPal payments.'}
@@ -289,7 +277,7 @@ export default function ChargeScreen() {
               { width: '31.5%', alignItems: 'center', paddingVertical: 16, borderRadius: 16, backgroundColor: pressed ? colors.line : colors.card },
             ]}
           >
-            <Text style={{ fontSize: 28, fontWeight: '500', color: colors.ink }}>{key}</Text>
+            <Text style={{ fontSize: 28, fontFamily: fonts.medium, color: colors.ink }}>{key}</Text>
           </Pressable>
         ))}
       </View>

@@ -1,6 +1,6 @@
 import { Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { colors } from '@/constants/theme'
+import { colors, fonts } from '@/constants/theme'
 import { useOnline } from '@/lib/connectivity'
 
 /** Shown on every screen while the server can't be reached. Disappears by itself when it can. */
@@ -13,8 +13,8 @@ export function OfflineBanner() {
       accessibilityRole="alert"
       style={{ backgroundColor: colors.warn, paddingTop: insets.top + 6, paddingBottom: 8, paddingHorizontal: 16 }}
     >
-      <Text style={{ color: '#fff', fontWeight: '600' }}>No connection to Tilltide. Reconnecting…</Text>
-      <Text style={{ color: '#fff', fontSize: 13 }}>
+      <Text style={{ color: '#fff', fontFamily: fonts.semibold }}>No connection to Tilltide. Reconnecting…</Text>
+      <Text style={{ color: '#fff', fontSize: 13, fontFamily: fonts.medium }}>
         Payments already on screen will still show as paid once the connection is back. Use your card reader for new sales meanwhile.
       </Text>
     </View>

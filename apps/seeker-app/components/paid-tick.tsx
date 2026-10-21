@@ -1,7 +1,10 @@
 import { Ionicons } from '@expo/vector-icons'
 import { useEffect, useRef } from 'react'
-import { Animated, Easing } from 'react-native'
+import { Animated, Easing, Platform } from 'react-native'
 import { colors } from '@/constants/theme'
+
+// Web has no native animation driver; the JS driver is smooth enough there.
+const NATIVE_DRIVER = Platform.OS !== 'web'
 
 /** The "Paid" moment: a green disc springs in and the tick pops in on top. */
 export function PaidTick({ size = 112 }: { size?: number }) {
@@ -11,8 +14,8 @@ export function PaidTick({ size = 112 }: { size?: number }) {
   useEffect(() => {
     // The tick starts while the disc is still settling, so the whole moment lands in about 0.4s.
     Animated.parallel([
-      Animated.spring(disc, { toValue: 1, friction: 6, tension: 140, useNativeDriver: true }),
-      Animated.timing(tick, { toValue: 1, delay: 150, duration: 220, easing: Easing.out(Easing.back(2)), useNativeDriver: true }),
+      Animated.spring(disc, { toValue: 1, friction: 6, tension: 140, useNativeDriver: NATIVE_DRIVER }),
+      Animated.timing(tick, { toValue: 1, delay: 150, duration: 220, easing: Easing.out(Easing.back(2)), useNativeDriver: NATIVE_DRIVER }),
     ]).start()
   }, [disc, tick])
 
