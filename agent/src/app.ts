@@ -3,13 +3,13 @@ import Anthropic from '@anthropic-ai/sdk'
 import { address, isAddress, isSignature, type Signature } from '@solana/kit'
 import { toBaseUnits } from '@tilltide/agent-pay-kit'
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { secureHeaders } from 'hono/secure-headers'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
-import { clientIp, rateLimit } from './rate-limit'
+import { clientIp, rateLimit, requireOrigin } from './rate-limit'
 import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
@@ -61,11 +61,13 @@ function serializeMerchant(m: MerchantRow) {
 
 export const app = new Hono()
 
+app.use(requireOrigin(config.originSecret))
+const ip = (c: Context) => clientIp(c, Boolean(config.originSecret))
 app.use(secureHeaders())
 // Every request body here is small JSON; refuse anything big before parsing it.
 app.use(bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json({ error: 'Request too large' }, 413) }))
-app.use('*', rateLimit({ name: 'ip', windowMs: 60_000, max: config.rateLimits.perIp, key: clientIp }))
-app.use('/auth/*', rateLimit({ name: 'auth', windowMs: 60_000, max: config.rateLimits.auth, key: clientIp }))
+app.use('*', rateLimit({ name: 'ip', windowMs: 60_000, max: config.rateLimits.perIp, key: ip }))
+app.use('/auth/*', rateLimit({ name: 'auth', windowMs: 60_000, max: config.rateLimits.auth, key: ip }))
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)

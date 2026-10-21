@@ -39,6 +39,8 @@ export const config = {
     effort: (process.env.AGENT_EFFORT ?? 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
     dailyLimit: Number(process.env.AGENT_DAILY_LIMIT ?? 50),
   },
+  /** Shared secret Cloudflare adds as x-tilltide-origin. When set, requests without it are refused. */
+  originSecret: process.env.ORIGIN_SECRET || null,
   rateLimits: {
     /** Requests per minute per IP, and sign-in attempts per minute per IP. */
     perIp: Number(process.env.RATE_LIMIT_PER_IP ?? 300),

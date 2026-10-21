@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import type { Context, Next } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 
@@ -27,11 +28,34 @@ export function rateLimit(opts: { windowMs: number; max: number; key: (c: Contex
 }
 
 /**
- * The caller's IP. Behind Railway's proxy the client address is the last X-Forwarded-For entry
+ * The caller's IP. Behind Cloudflare (origin locked with ORIGIN_SECRET) it's CF-Connecting-IP, which only
+ * Cloudflare can set once direct traffic is refused. Otherwise, behind Railway's proxy the client address is the last X-Forwarded-For entry
  * (earlier entries can be set by the client, so they're not trusted).
  */
-export function clientIp(c: Context): string {
+export function clientIp(c: Context, behindCloudflare = false): string {
+  if (behindCloudflare) {
+    const cf = c.req.header('cf-connecting-ip')
+    if (cf) return cf
+  }
   const forwarded = c.req.header('x-forwarded-for')
   if (forwarded) return forwarded.split(',').at(-1)!.trim()
   return c.req.header('x-real-ip') ?? 'unknown'
+}
+
+/**
+ * When ORIGIN_SECRET is set, only requests carrying it (added by a Cloudflare Transform Rule) get through,
+ * so nobody can bypass Cloudflare by calling the Railway address directly. /health stays open for
+ * Railway's health check.
+ */
+export function requireOrigin(secret: string | null) {
+  const expected = secret ? Buffer.from(secret) : null
+  return async (c: Context, next: Next) => {
+    if (expected && c.req.path !== '/health') {
+      const given = Buffer.from(c.req.header('x-tilltide-origin') ?? '')
+      if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+        throw new HTTPException(403, { message: 'Forbidden' })
+      }
+    }
+    await next()
+  }
 }
