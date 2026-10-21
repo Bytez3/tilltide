@@ -5,9 +5,9 @@ Small, dependency-light building blocks for taking stablecoin payments on Solana
 | Module | What it does |
 | --- | --- |
 | `solana-pay` | `encodeTransferRequest` / `parseTransferRequest` for [Solana Pay](https://docs.solanapay.com/spec) QR codes, with a unique `reference` per sale |
-| `watcher` | `findSignatureByReference`, `verifyPayment`, `waitForPayment`: find a payment by its reference and check the recipient actually received the amount (from token balance deltas, so it works with any wallet) |
+| `watcher` | `findPayment`, `verifyPayment`, `waitForPayment` find a payment by its reference and check that the recipient actually received the amount. They read token balance changes, so they work with any wallet. They also check every transaction carrying the reference (paged and cached), so dust or spam can't block the real payment. |
 | `loyalty` | `calculatePoints` and `getIssuePointsInstructions` to mint SPL loyalty points to the payer |
-| `sweep` | `getSweepInstructions` to move takings to the owner's wallet, signed by the merchant's wallet |
+| `sweep` | `getSweepInstructions` builds a transfer of takings to the owner's wallet, signed by the merchant's wallet. It takes an optional platform fee in the same transaction, and a `tilltide:sweep:<id>` memo that identifies it onchain. `sweepFee` calculates the fee. |
 | `tokens` | USDC (Token) and PYUSD (Token-2022) mints for devnet and mainnet |
 | `amount` | `toBaseUnits` / `fromBaseUnits`: bigint money, no floats |
 
@@ -28,3 +28,15 @@ if (result.ok) console.log(`Paid by ${result.payer}`)
 ```
 
 Agent tools (`get_payments`, `get_daily_summary`, `issue_points`, `sweep_to_owner`) live in [`agent/`](../../agent) for now and move into this package at M4.
+
+## Install
+
+```bash
+npm install @tilltide/agent-pay-kit @solana/kit @solana-program/token @solana-program/memo
+```
+
+The package ships ESM, CommonJS and TypeScript types. Build it with `pnpm build`. Publishing uses `pnpm publish`, which swaps in the `dist` entry points from `publishConfig`.
+
+## Licence
+
+MIT

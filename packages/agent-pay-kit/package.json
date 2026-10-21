@@ -11,7 +11,9 @@
   },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean --sourcemap",
+    "prepublishOnly": "pnpm build && pnpm test"
   },
   "peerDependencies": {
     "@solana-program/token": "^0.18.0",
@@ -23,6 +25,41 @@
     "@solana/kit": "^8.5.0",
     "typescript": "~5.9.3",
     "vitest": "^5.0.0",
-    "@solana-program/memo": "^0.16.0"
+    "@solana-program/memo": "^0.16.0",
+    "tsup": "^9.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bytez3/tilltide",
+    "directory": "packages/agent-pay-kit"
+  },
+  "keywords": [
+    "solana",
+    "solana-pay",
+    "usdc",
+    "pyusd",
+    "payments",
+    "ai-agents",
+    "loyalty",
+    "mobile-wallet-adapter"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.cjs"
+      }
+    }
   }
 }
