@@ -383,6 +383,8 @@ async function myRefund(c: { get(key: 'wallet'): string; req: { param(name: 'id'
   return { merchant, refund }
 }
 
+shop.get('/refunds/:id', async (c) => c.json(serializeRefund((await myRefund(c)).refund)))
+
 /** A single-use message for the owner's wallet to sign, naming this refund and its amount. */
 shop.post('/refunds/:id/challenge', async (c) => {
   const { merchant, refund } = await myRefund(c)

@@ -87,4 +87,6 @@ export interface RefundRow {
   error: string | null
   createdAt: Date
   approvedAt: Date | null
+  executingUntil: Date | null
+  paypalAttempts: number
 }

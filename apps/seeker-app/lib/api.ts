@@ -141,6 +141,7 @@ export const api = {
   chat: (messages: ChatTurn[]) =>
     request<{ reply: string; sweeps: Sweep[]; refunds: Refund[] }>('/shop/chat', post({ messages })),
 
+  getRefund: (id: string) => request<Refund>(`/shop/refunds/${id}`),
   refundChallenge: (id: string) => request<{ nonce: string; domain: string; statement: string }>(`/shop/refunds/${id}/challenge`, post()),
   approveRefund: (id: string, signedMessage?: string, signature?: string) =>
     request<Refund>(`/shop/refunds/${id}/approve`, post(signedMessage && signature ? { signedMessage, signature } : {})),

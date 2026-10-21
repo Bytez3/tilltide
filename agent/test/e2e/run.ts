@@ -85,7 +85,15 @@ function mintAccountFile(dir: string, mint: Address, authority: Address): string
 function startMockPayPal(port: number) {
   const orders = new Map<string, any>()
   let n = 0
-  const state = { holdForReview: false, captures: 0, refundCalls: 0, failNextRefund: false }
+  const state = {
+    holdForReview: false,
+    captures: 0,
+    refundCalls: 0,
+    failNextRefund: false, // 503 before anything happens
+    loseNextResponse: false, // refund happens, then the response is lost (503)
+    rejectNextRefund: false, // 422 and nothing happens
+    pendingRefunds: false, // new refunds start PENDING
+  }
   const refundsByRequestId = new Map<string, any>()
   const server = createServer(async (req, res) => {
     let body = ''
@@ -115,12 +123,32 @@ function startMockPayPal(port: number) {
         state.failNextRefund = false
         return send(503, { message: 'Service unavailable' })
       }
+      if (state.rejectNextRefund) {
+        state.rejectNextRefund = false
+        return send(422, { message: 'Unprocessable', details: [{ issue: 'TRANSACTION_REFUSED' }] })
+      }
       // Real PayPal returns the original refund for a repeated PayPal-Request-Id.
       const requestId = String(req.headers['paypal-request-id'])
       if (!refundsByRequestId.has(requestId)) {
-        refundsByRequestId.set(requestId, { id: `REFUND${refundsByRequestId.size + 1}`, status: 'COMPLETED', amount: JSON.parse(body).amount, capture: refundMatch[1] })
+        const capture = refundMatch[1]!
+        const amount = JSON.parse(body).amount
+        const order = [...orders.values()].find((o) => o.purchase_units[0].payments?.captures?.[0]?.id === capture)
+        const already = [...refundsByRequestId.values()].filter((r) => r.capture === capture).reduce((t, r) => t + Number(r.amount.value), 0)
+        if (already + Number(amount.value) > Number(order.purchase_units[0].amount.value) + 1e-9) {
+          return send(422, { message: 'Refund exceeds captured amount', details: [{ issue: 'REFUND_AMOUNT_EXCEEDED' }] })
+        }
+        refundsByRequestId.set(requestId, { id: `REFUND${refundsByRequestId.size + 1}`, status: state.pendingRefunds ? 'PENDING' : 'COMPLETED', amount, capture })
+      }
+      if (state.loseNextResponse) {
+        state.loseNextResponse = false
+        return send(503, { message: 'Gateway timeout' })
       }
       return send(201, refundsByRequestId.get(requestId))
+    }
+    const refundGet = url.pathname.match(/^\/v2\/payments\/refunds\/([^/]+)$/)
+    if (req.method === 'GET' && refundGet) {
+      const r = [...refundsByRequestId.values()].find((x) => x.id === refundGet[1])
+      return r ? send(200, r) : send(404, { message: 'not found' })
     }
     const m = url.pathname.match(/^\/v2\/checkout\/orders\/([^/]+)(\/capture)?$/)
     const order = m && orders.get(m[1]!)
@@ -143,6 +171,9 @@ function startMockPayPal(port: number) {
     releaseReview: (id: string) => (orders.get(id).purchase_units[0].payments.captures[0].status = 'COMPLETED'),
     order: (id: string) => orders.get(id),
     refunds: () => [...refundsByRequestId.values()],
+    completePendingRefunds: () => {
+      for (const r of refundsByRequestId.values()) if (r.status === 'PENDING') r.status = 'COMPLETED'
+    },
     close: () => server.close(),
   }
 }
@@ -213,6 +244,7 @@ async function main() {
       RATE_LIMIT_AUTH: '1000',
       RATE_LIMIT_PER_IP: '100000',
       AGENT_DAILY_LIMIT: '2',
+      WATCH_INTERVAL_MS: '500',
       TREASURY_WALLET: treasury.address,
       SWEEP_FEE_BPS: '50',
       ANTHROPIC_API_KEY: '',
@@ -811,6 +843,87 @@ async function main() {
       const { body } = await api('GET', '/shop/summary', undefined, tillToken)
       assert.deepEqual(body.summary.refunds, { count: 1, total: '2' })
       assert.equal(body.summary.netTakings, String(Number(body.summary.takings) - 2))
+    })
+
+    await step('PayPal refunds stay single through lost responses, retried 4xx, parallel proposals and PENDING', async () => {
+      const { proposeRefund, approveRefund, getRefund } = await import('../../src/services/refunds')
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      const order2 = (await sql<any[]>`select id from payments where paypal_order_id = 'ORDER2'`)[0].id
+      const approve = async (refundId: string) => {
+        const ch = (await api('POST', `/shop/refunds/${refundId}/challenge`, undefined, tillToken)).body
+        const msg = new TextEncoder().encode(
+          `tilltide.test wants you to sign in with your Solana account:\n${till.address}\n\n${ch.statement}\n\nURI: https://tilltide.test\nVersion: 1\nChain ID: solana:devnet\nNonce: ${ch.nonce}`,
+        )
+        const signed = { signedMessage: Buffer.from(msg).toString('base64'), signature: Buffer.from(await signBytes(till.keyPair.privateKey, msg)).toString('base64') }
+        return api('POST', `/shop/refunds/${refundId}/approve`, signed, tillToken)
+      }
+      const settle = async (refundId: string) => {
+        for (let i = 0; i < 40; i++) {
+          const r = await getRefund(merchant, refundId)
+          assert.notEqual(r!.status, 'failed', 'a refund that may have gone through must never be marked failed')
+          if (r!.status === 'completed') return r
+          await approveRefund(merchant, r!, null).catch(() => null)
+          await sleep(300)
+        }
+        throw new Error('refund never settled')
+      }
+      const requestsFor = (id: string) => paypal.refunds().filter((r) => r.id && r.capture === 'CAP-ORDER2').length + 0 * id.length
+
+      // Two proposals at once (the agent can call tools in parallel): only one survives.
+      await Promise.all([proposeRefund(merchant, order2, null, 'a'), proposeRefund(merchant, order2, null, 'b')])
+      assert.equal((await sql`select count(*)::int as n from refunds where payment_id = ${order2} and status = 'proposed'`)[0]!.n, 1)
+
+      // The refund goes through but PayPal's response is lost: retries return the same refund, once.
+      const lost = await proposeRefund(merchant, order2, 1_000_000n, 'lost response')
+      paypal.state.loseNextResponse = true
+      assert.equal((await approve(lost.id)).body.status, 'processing')
+      await settle(lost.id)
+      assert.equal(requestsFor(lost.id), 1)
+
+      // First call fails (503), the retry gets a 4xx: it may have gone through, so it is NOT marked failed.
+      const retried = await proposeRefund(merchant, order2, 1_000_000n, 'retried 4xx')
+      paypal.state.failNextRefund = true
+      await approve(retried.id)
+      paypal.state.rejectNextRefund = true
+      await settle(retried.id)
+      assert.equal(requestsFor(retried.id), 2)
+
+      // A 4xx on the very first call is a clean refusal: nothing moved, so it's failed and the money is still refundable.
+      const refused = await proposeRefund(merchant, order2, 500_000n, 'refused')
+      paypal.state.rejectNextRefund = true
+      assert.equal((await approve(refused.id)).body.status, 'failed')
+      assert.equal(requestsFor(refused.id), 2)
+
+      // PENDING at PayPal: the watcher follows it to completion.
+      paypal.state.pendingRefunds = true
+      const pending = await proposeRefund(merchant, order2, 500_000n, 'pending')
+      assert.equal((await approve(pending.id)).body.status, 'pending')
+      paypal.state.pendingRefunds = false
+      paypal.completePendingRefunds()
+      await until('pending refund completes', async () => (await getRefund(merchant, pending.id))!.status === 'completed', 30_000)
+
+      // 3.00 paid, 2.50 refunded: 0.50 left, no more.
+      await assert.rejects(proposeRefund(merchant, order2, 600_000n, 'too much'), /Only 0.5 USD/)
+      const last = await proposeRefund(merchant, order2, null, 'rest')
+      assert.equal(last.amount, 500_000n)
+      assert.equal((await api('POST', `/shop/refunds/${last.id}/cancel`, undefined, tillToken)).body.status, 'cancelled')
+      assert.equal((await api('POST', `/shop/refunds/${last.id}/cancel`, undefined, tillToken)).status, 409)
+
+      // Another shop can't see or touch it.
+      const other = await signIn(owner)
+      assert.equal((await api('GET', `/shop/refunds/${last.id}`, undefined, other)).status, 404)
+      assert.equal((await api('POST', `/shop/refunds/${last.id}/challenge`, undefined, other)).status, 404)
+    })
+
+    await step('no sweep fee when the treasury is the shop\'s own owner wallet', async () => {
+      const { proposeSweep } = await import('../../src/services/sweeps')
+      const other = await signIn(owner)
+      await api('PATCH', '/shop', { ownerWallet: treasury.address }, other)
+      const shop = (await sql<any[]>`select * from merchants where wallet = ${owner.address}`)[0]
+      const sweep = await proposeSweep(shop, 1_000_000n, null)
+      assert.equal(sweep.feeAmount, 0n)
+      assert.equal(sweep.feeWallet, null)
+      await sql`update sweeps set status = 'cancelled' where id = ${sweep.id}`
     })
 
     await step("agent tools return real data and can't move money", async () => {

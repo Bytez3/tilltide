@@ -57,5 +57,5 @@ export const config = {
   androidCertSha256: (process.env.ANDROID_CERT_SHA256 ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   /** Unpaid requests stop being watched after this long. */
   paymentTtlMs: 30 * 60 * 1000,
-  watchIntervalMs: 3000,
+  watchIntervalMs: Number(process.env.WATCH_INTERVAL_MS ?? 3000),
 }

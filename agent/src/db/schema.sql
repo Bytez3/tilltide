@@ -120,3 +120,8 @@ create table if not exists refunds (
   approved_at timestamptz
 );
 create index if not exists refunds_payment on refunds (payment_id);
+
+-- Refund execution: a short lease so the watcher and a request never call PayPal for the same refund
+-- at once, and an attempt count so a 4xx is only trusted as "nothing moved" on the very first call.
+alter table refunds add column if not exists executing_until timestamptz;
+alter table refunds add column if not exists paypal_attempts integer not null default 0;

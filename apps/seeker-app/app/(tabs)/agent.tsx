@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
 import { Button } from '@/components/ui'
@@ -33,6 +33,16 @@ export default function AgentScreen() {
   const [signing, setSigning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scroll = useRef<ScrollView>(null)
+
+  // Follow a refund PayPal is still processing until it settles.
+  useEffect(() => {
+    if (!refund || (refund.status !== 'pending' && refund.status !== 'processing') || signing) return
+    const timer = setTimeout(async () => {
+      const latest = await api.getRefund(refund.id).catch(() => null)
+      if (latest) setRefund(latest)
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [refund, signing])
 
   if (!merchant) {
     return (
@@ -85,6 +95,7 @@ export default function AgentScreen() {
       setRefund(await approveRefund(refund))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      setRefund(await api.getRefund(refund.id).catch(() => refund))
     } finally {
       setSigning(false)
     }

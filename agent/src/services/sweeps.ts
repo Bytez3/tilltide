@@ -38,7 +38,9 @@ export async function proposeSweep(merchant: MerchantRow, amount: bigint, reason
   if (amount > balance) throw new SweepError(`The till only holds ${fromBaseUnits(balance, token.decimals)} ${token.symbol}`)
 
   const { treasury, bps } = config.sweepFee
-  const fee = treasury ? sweepFee(amount, bps) : 0n
+  // A treasury that is the till or the owner would make the fee meaningless (or unverifiable).
+  const feeApplies = treasury && treasury !== merchant.wallet && treasury !== merchant.ownerWallet
+  const fee = feeApplies ? sweepFee(amount, bps) : 0n
 
   // One open proposal at a time keeps the confirm step unambiguous.
   await sql`update sweeps set status = 'cancelled' where merchant_id = ${merchant.id} and status = 'proposed'`

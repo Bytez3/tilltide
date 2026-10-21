@@ -57,13 +57,13 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 26 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 28 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
 - Reconciliation: money outside the ledger is flagged.
 - Sweeps: they must come from the till, a signature can't be replayed, a look-alike manual transfer never counts, a dropped transaction is handled, and a lost signature is recovered.
-- PayPal: capture on return, capture by the watcher, a capture held for review, expired requests, and refunds (wallet-signed approval, forgery, over-refunding, a PayPal outage mid-refund).
+- PayPal: capture on return, capture by the watcher, a capture held for review, expired requests, and refunds (wallet-signed approval, forgery, over-refunding, outages, lost responses, retried 4xx, parallel proposals, PENDING).
 - Access: one shop can't see another's payments or sweeps.
 - Agent: its tools return real data and can't move money.
 

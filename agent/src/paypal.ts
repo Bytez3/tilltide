@@ -35,6 +35,8 @@ export class PayPalError extends Error {
     message: string,
     readonly status: number,
     readonly issue?: string,
+    /** 'auth' = getting the access token failed, so the actual API call never happened. */
+    readonly stage: 'auth' | 'api' = 'api',
   ) {
     super(message)
   }
@@ -66,7 +68,7 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
       },
       body: 'grant_type=client_credentials',
     })
-    if (!res.ok) throw new PayPalError('PayPal authentication failed', res.status)
+    if (!res.ok) throw new PayPalError('PayPal authentication failed', res.status, undefined, 'auth')
     const body = (await res.json()) as { access_token: string; expires_in: number }
     token = { value: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 }
     return token.value
