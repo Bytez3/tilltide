@@ -46,6 +46,8 @@ export interface Payment {
   tokenAmount: string | null
   token: string
   label: string | null
+  /** The basket, when the sale was made from the item menu. Prices are per unit in `decimals` units. */
+  items?: { id: string | null; name: string; price: string; qty: number }[] | null
   status: 'pending' | 'paid' | 'failed' | 'expired'
   signature: string | null
   payer: string | null
@@ -60,6 +62,20 @@ export interface Payment {
   createdAt: string
   paidAt: string | null
   url?: string
+}
+
+/** One item on the shop's quick-sale menu. `price` is a decimal string in the shop's currency, e.g. "4.5". */
+export interface Item {
+  id: string
+  name: string
+  price: string
+  position: number
+}
+
+/** One line in the till's basket. */
+export interface BasketLine {
+  id: string
+  qty: number
 }
 
 export interface Sweep {
@@ -97,6 +113,7 @@ export interface DailySummary {
   paidCount: number
   averageSale: string
   uniqueCustomers: number
+  items?: { name: string; qty: number; sales: string }[]
   topCustomers: { wallet: string; total: string; visits: number }[]
   pointsIssued: string
   stillPending: number
@@ -171,8 +188,14 @@ export const api = {
   ) =>
     request<Merchant>('/shop', { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  createPayment: (amount: string, rail: Rail = 'solana', usePoints = false, loyaltyCode?: string) =>
-    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode })),
+  /** `amount` is typed on the keypad; with a basket it's added on top as "Other". The server prices the basket. */
+  createPayment: (amount: string | undefined, rail: Rail = 'solana', usePoints = false, loyaltyCode?: string, items?: BasketLine[]) =>
+    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode, items: items?.length ? items : undefined })),
+  listItems: () => request<Item[]>('/shop/items'),
+  createItem: (name: string, price: string) => request<Item>('/shop/items', post({ name, price })),
+  updateItem: (id: string, changes: { name?: string; price?: string; position?: number }) =>
+    request<Item>(`/shop/items/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
+  deleteItem: (id: string) => request<{ ok: true }>(`/shop/items/${id}`, { method: 'DELETE' }),
   connectPayPal: () => request<{ url: string }>('/shop/paypal/connect', post()),
   refreshPayPal: () => request<Merchant>('/shop/paypal/refresh', post()),
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),

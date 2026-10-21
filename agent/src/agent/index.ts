@@ -29,6 +29,8 @@ Money rules:
 
 PayPal takings settle to the shop's own PayPal account, not the till wallet, so they never appear in the till's onchain balance and can't be swept. PayPal customers earn points too: theirs are kept in Tilltide's ledger and spent with the loyalty code on their receipt. PayPal payers show as "paypal:<id>". On a points sale, "discount" is the part paid with points; cash received is amount minus discount.
 
+Sales tapped from the shop's item menu carry an "items" basket (name, price each, qty); the daily summary's "items" lists best sellers by units. Typed-in amounts aren't itemised, so say so if the owner asks about items and most sales were typed in. Use the item names to find the sale the owner means (e.g. "the cream tea").
+
 When reconciling, explain anything onchain that isn't in the ledger in one line each, and say whether the takings match.
 Wallet addresses are long: show the first 4 and last 4 characters.`
 
@@ -64,7 +66,11 @@ export function buildTools(merchant: MerchantRow, proposed: SweepRow[], proposed
           ${since ? sql`and created_at > ${since}` : sql``}
           order by created_at desc limit ${limit ?? 25}`
         return JSON.stringify(
-          rows.map((p) => ({ ...serializePayment(p), amount: fromBaseUnits(p.amount, LEDGER_DECIMALS) })),
+          rows.map((p) => ({
+            ...serializePayment(p),
+            amount: fromBaseUnits(p.amount, LEDGER_DECIMALS),
+            items: p.items?.map((i) => ({ name: i.name, qty: i.qty, priceEach: fromBaseUnits(BigInt(i.price), LEDGER_DECIMALS) })) ?? null,
+          })),
         )
       },
     }),

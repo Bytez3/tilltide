@@ -2,6 +2,7 @@ import { isAddress } from '@solana/kit'
 import { useEffect, useState } from 'react'
 import { Linking, ScrollView, Text, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
+import { MenuEditor } from '@/components/menu-editor'
 import { Button, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
@@ -198,6 +199,8 @@ export default function SettingsScreen() {
       ) : (
         <SetupCard />
       )}
+
+      {merchant && !isStaff && <MenuEditor />}
 
       {merchant && !isStaff && (
         <View style={ui.card}>

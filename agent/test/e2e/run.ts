@@ -1101,11 +1101,88 @@ async function main() {
       await api('PATCH', '/shop', { currency: 'USD' }, tillToken)
     })
 
+    await step('quick-sale items: the owner keeps a menu; baskets are priced by the server, not the till', async () => {
+      const pasty = await api('POST', '/shop/items', { name: 'Pasty', price: '4.50' }, tillToken)
+      assert.equal(pasty.status, 201, JSON.stringify(pasty.body))
+      const coffee = await api('POST', '/shop/items', { name: 'Coffee', price: '3' }, tillToken)
+      assert.equal(coffee.status, 201, JSON.stringify(coffee.body))
+      for (const bad of [{ name: 'Free', price: '0' }, { name: '  ', price: '1.00' }, { name: 'Odd', price: '1.005' }, { name: 'Neg', price: '-2' }]) {
+        assert.equal((await api('POST', '/shop/items', bad, tillToken)).status, 400, JSON.stringify(bad))
+      }
+      const menu = await api('GET', '/shop/items', undefined, tillToken)
+      assert.deepEqual(menu.body.map((i: any) => [i.name, i.price]), [['Pasty', '4.5'], ['Coffee', '3']])
+
+      // Staff can read the menu and sell from it, but only the owner can change it.
+      const invite = await api('POST', '/shop/staff/invites', { label: 'Menu test' }, tillToken)
+      const staff = (await api('POST', '/auth/staff', { code: invite.body.code })).body.token
+      assert.equal((await api('GET', '/shop/items', undefined, staff)).status, 200)
+      assert.equal((await api('POST', '/shop/items', { name: 'Free lunch', price: '0.01' }, staff)).status, 403)
+      assert.equal((await api('PATCH', `/shop/items/${pasty.body.id}`, { price: '0.01' }, staff)).status, 403)
+      assert.equal((await api('DELETE', `/shop/items/${pasty.body.id}`, undefined, staff)).status, 403)
+      const staffSale = await api('POST', '/shop/payments', { items: [{ id: coffee.body.id, qty: 1 }] }, staff)
+      assert.equal(staffSale.status, 201, JSON.stringify(staffSale.body))
+      assert.equal(staffSale.body.amount, '3000000')
+      const staffId = (await api('GET', '/shop/staff', undefined, tillToken)).body.find((d: any) => d.label === 'Menu test').id
+      await api('POST', `/shop/staff/${staffId}/remove`, undefined, tillToken)
+
+      // 2 pasties + a coffee + £1.00 typed on the keypad. The till's label is ignored; the server writes it.
+      const created = await api(
+        'POST',
+        '/shop/payments',
+        { rail: 'paypal', amount: '1.00', label: 'Anything', items: [{ id: pasty.body.id, qty: 1 }, { id: coffee.body.id, qty: 1 }, { id: pasty.body.id, qty: 1 }] },
+        tillToken,
+      )
+      assert.equal(created.status, 201, JSON.stringify(created.body))
+      assert.equal(created.body.amount, '13000000')
+      assert.equal(created.body.label, '2× Pasty, Coffee, Other')
+      assert.deepEqual(
+        created.body.items.map((i: any) => [i.name, i.price, i.qty]),
+        [['Pasty', '4500000', 2], ['Coffee', '3000000', 1], ['Other', '1000000', 1]],
+      )
+      const orderId = new URL(created.body.url).searchParams.get('token')!
+      assert.equal(paypal.order(orderId).purchase_units[0].amount.value, '13.00')
+      paypal.approve(orderId)
+      await fetch(`${API}/paypal/return?token=${orderId}&PayerID=BUYER2`)
+      await waitFor(tillToken, created.body.id, (p) => p.status === 'paid', 'basket paid')
+
+      // Bad baskets are refused, not guessed at.
+      const other = await signIn(owner)
+      const theirs = await api('POST', '/shop/items', { name: 'Their pasty', price: '0.10' }, other)
+      assert.equal(theirs.status, 201)
+      const refused: unknown[] = [
+        { items: [{ id: theirs.body.id, qty: 1 }] },
+        { items: [{ id: pasty.body.id, qty: 0 }] },
+        { items: [{ id: pasty.body.id, qty: 100 }] },
+        { items: [{ id: pasty.body.id, qty: 60 }, { id: pasty.body.id, qty: 60 }] },
+        { items: [{ id: 'not-a-uuid', qty: 1 }] },
+        { items: [] },
+      ]
+      for (const payload of refused) {
+        assert.equal((await api('POST', '/shop/payments', payload, tillToken)).status, 400, JSON.stringify(payload))
+      }
+      assert.equal((await api('PATCH', `/shop/items/${pasty.body.id}`, { price: '0.01' }, other)).status, 404, 'other shops cannot edit')
+
+      // Price changes apply to new sales only; past sales keep what they were sold at. Removed items can't be sold.
+      assert.equal((await api('PATCH', `/shop/items/${pasty.body.id}`, { name: 'Large pasty', price: '5.00' }, tillToken)).status, 200)
+      const after = await api('POST', '/shop/payments', { items: [{ id: pasty.body.id, qty: 1 }] }, tillToken)
+      assert.equal(after.body.amount, '5000000')
+      assert.equal(after.body.label, 'Large pasty')
+      assert.equal((await api('GET', `/shop/payments/${created.body.id}`, undefined, tillToken)).body.items[0].name, 'Pasty')
+      assert.equal((await api('DELETE', `/shop/items/${coffee.body.id}`, undefined, tillToken)).status, 200)
+      assert.equal((await api('POST', '/shop/payments', { items: [{ id: coffee.body.id, qty: 1 }] }, tillToken)).status, 400)
+      assert.deepEqual((await api('GET', '/shop/items', undefined, tillToken)).body.map((i: any) => i.name), ['Large pasty'])
+
+      // Best sellers in the summary come from paid baskets only.
+      const summary = (await api('GET', '/shop/summary', undefined, tillToken)).body.summary
+      assert.deepEqual(summary.items.map((i: any) => [i.name, i.qty]), [['Pasty', 2], ['Coffee', 1]])
+    })
+
     await step('end-of-day report and CSV export (one-time link, formula-safe)', async () => {
       const made = await api('POST', '/shop/reports', {}, tillToken)
       assert.equal(made.status, 200, JSON.stringify(made.body))
       assert.match(made.body.text, /from \d+ sales \(PayPal .*, wallet .*\)\. Average sale/)
       assert.match(made.body.text, /refund/)
+      assert.match(made.body.text, /Best sellers: 2× Pasty, 1× Coffee\./)
       assert.equal(made.body.narrative, null, 'no Claude key in tests: facts only')
       const list = await api('GET', '/shop/reports', undefined, tillToken)
       assert.equal(list.body[0].date, made.body.date)

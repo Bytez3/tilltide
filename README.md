@@ -6,6 +6,7 @@ A PayPal-first till and AI back office for small shops, with PayPal USD on Solan
 
 A shop runs its till on a Solana Seeker or any Android phone.
 - **Paying:** most customers pay with PayPal or a card by scanning a PayPal checkout QR. The money goes straight to the shop's own PayPal account. Customers with a Solana wallet pay in PYUSD (PayPal's stablecoin) or USDC instead.
+- **Menu:** the owner sets up items (Pasty £4.50, Coffee £3.00) and the till taps them into a basket, with the keypad for anything else. The server prices every basket from the shop's own menu, so a till can't change a price, and each sale keeps a copy of what was sold at what price. Best sellers appear in the daily summary and end-of-day report, and the agent can answer "what sold best today?".
 - **Loyalty:** every customer earns points and can spend them at the till. Wallet customers' points are held onchain. PayPal customers' points are kept in Tilltide's ledger and spent with the loyalty code on their receipt. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
 
 ## Repo

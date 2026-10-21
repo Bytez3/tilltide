@@ -18,6 +18,7 @@ export function GettingStarted() {
   const [dismissed, setDismissed] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const payments = useQuery({ queryKey: ['payments', merchant?.id], queryFn: () => api.listPayments(), enabled: !!merchant && !isStaff })
+  const items = useQuery({ queryKey: ['items', merchant?.id], queryFn: () => api.listItems(), enabled: !!merchant && !isStaff })
   const staff = useQuery({ queryKey: ['staff', merchant?.id], queryFn: () => api.listStaff(), enabled: !!merchant && !isStaff })
 
   useEffect(() => {
@@ -34,6 +35,7 @@ export function GettingStarted() {
       ? [{ label: 'Connect your PayPal', done: merchant.paypal.status === 'connected' || Boolean(merchant.paypal.email), go: '/settings' as const }]
       : []),
     { label: 'Add the owner wallet (where takings go)', done: Boolean(merchant.ownerWallet), go: '/settings' as const },
+    { label: 'Add your menu items (optional)', done: (items.data ?? []).length > 0, go: '/settings' as const },
     { label: 'Take a first sale', done: (payments.data ?? []).some((p) => p.status === 'paid'), go: null },
     { label: 'Pair a staff phone (optional)', done: (staff.data ?? []).length > 0, go: '/settings' as const },
   ]

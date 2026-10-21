@@ -1,4 +1,5 @@
 import { fromBaseUnits } from '@tilltide/agent-pay-kit'
+import { itemTotals } from './items'
 import { address, type Signature } from '@solana/kit'
 import { findAssociatedTokenPda } from '@solana-program/token'
 import { config } from '../config'
@@ -60,6 +61,8 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     averageSale: paid.length ? fromBaseUnits(total / BigInt(paid.length), token.decimals) : '0',
     uniqueCustomers: byCustomer.size,
     topCustomers,
+    /** Best sellers by units, from the basket of each paid sale (keypad amounts aren't itemised). */
+    items: itemTotals(paid, token.decimals).slice(0, 10),
     pointsRedeemed: paid.reduce((sum, p) => sum + p.pointsRedeemed, 0n).toString(),
     paypalFees: fromBaseUnits(paid.reduce((sum, p) => sum + p.paypalFee, 0n), token.decimals),
     pointsDiscount: fromBaseUnits(paid.reduce((sum, p) => sum + p.discount, 0n), token.decimals),

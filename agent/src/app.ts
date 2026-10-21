@@ -18,7 +18,7 @@ import { AuthError, createNonce, createStaffInvite, redeemStaffInvite, revokeTok
 import { config } from './config'
 import { isDate } from './dates'
 import { FxError } from './fx'
-import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from './db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type ItemRow, type SaleItem, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, PayPalSaleError, serializePayment } from './services/payments'
 import { OnboardingError, refreshPayPalConnection, startPayPalOnboarding } from './services/paypal-onboarding'
@@ -29,6 +29,7 @@ import { listReports, writeDailyReport } from './services/reports'
 import { createExportToken, exportCsv, redeemExportToken } from './services/export'
 import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
 import { checkPayment } from './services/watcher'
+import { archiveItem, createItem, ItemError, listItems, priceBasket, updateItem } from './services/items'
 import { rpc } from './solana'
 
 const wallet = z.string().refine(isAddress, 'Not a Solana address')
@@ -86,7 +87,7 @@ function serializeMerchant(m: MerchantRow) {
 export const app = new Hono()
 
 if (config.corsOrigins.length) {
-  app.use(cors({ origin: config.corsOrigins, allowHeaders: ['content-type', 'authorization'], allowMethods: ['GET', 'POST', 'PATCH'] }))
+  app.use(cors({ origin: config.corsOrigins, allowHeaders: ['content-type', 'authorization'], allowMethods: ['GET', 'POST', 'PATCH', 'DELETE'] }))
 }
 app.use(requireOrigin(config.originSecret))
 const ip = (c: Context) => clientIp(c, Boolean(config.originSecret))
@@ -277,6 +278,7 @@ const STAFF_ALLOWED: [string, RegExp][] = [
   ['POST', /^\/shop\/payments$/],
   ['GET', /^\/shop\/payments(\/[^/]+)?$/],
   ['GET', /^\/shop\/summary$/],
+  ['GET', /^\/shop\/items$/],
   ['POST', /^\/shop\/logout$/],
 ]
 const shop = new Hono<ShopEnv>()
@@ -392,6 +394,49 @@ shop.patch('/', async (c) => {
   return c.json(serializeMerchant(row!))
 })
 
+// ---- Quick-sale items (the shop's menu). Staff can read it; only the owner changes it. ----------
+
+const serializeItem = (i: ItemRow) => ({ id: i.id, name: i.name, price: fromBaseUnits(i.price, LEDGER_DECIMALS), position: i.position })
+const itemPrice = z
+  .string()
+  .regex(/^\d{1,6}(\.\d{1,2})?$/, 'Price must be like 4.50')
+  .transform((v) => toBaseUnits(v, 2) * 10n ** BigInt(LEDGER_DECIMALS - 2))
+  .refine((v) => v > 0n, 'Price must be more than zero')
+const itemName = z.string().trim().min(1, 'Give the item a name').max(40)
+const itemErrors = (err: unknown): never => {
+  if (err instanceof ItemError) throw new HTTPException(err.message === 'Item not found' ? 404 : 400, { message: err.message })
+  throw err
+}
+
+shop.get('/items', async (c) => {
+  const merchant = await myShop(c)
+  return c.json((await listItems(merchant.id)).map(serializeItem))
+})
+
+shop.post('/items', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ name: itemName, price: itemPrice }))
+  const item = await createItem(merchant.id, input.name, input.price).catch(itemErrors)
+  return c.json(serializeItem(item), 201)
+})
+
+shop.patch('/items/:id', async (c) => {
+  const merchant = await myShop(c)
+  const id = z.uuid().safeParse(c.req.param('id'))
+  if (!id.success) throw new HTTPException(404, { message: 'Item not found' })
+  const input = await body(c, z.object({ name: itemName.optional(), price: itemPrice.optional(), position: z.number().int().min(0).max(1000).optional() }))
+  const item = await updateItem(merchant.id, id.data, input).catch(itemErrors)
+  return c.json(serializeItem(item))
+})
+
+shop.delete('/items/:id', async (c) => {
+  const merchant = await myShop(c)
+  const id = z.uuid().safeParse(c.req.param('id'))
+  if (!id.success) throw new HTTPException(404, { message: 'Item not found' })
+  await archiveItem(merchant.id, id.data).catch(itemErrors)
+  return c.json({ ok: true })
+})
+
 /**
  * Merchant enters an amount; returns the URL to show as a QR.
  * `solana`: a Solana Pay transfer request. `paypal`: PayPal's checkout page, for customers without a wallet.
@@ -401,8 +446,11 @@ shop.post('/payments', async (c) => {
   const input = await body(
     c,
     z.object({
-      amount: z.string().max(20),
+      /** Typed on the keypad. With `items`, anything typed is added on top as "Other". */
+      amount: z.string().max(20).optional(),
       label: z.string().max(80).optional(),
+      /** A basket from the shop's item list. The server prices it; the till never sends prices. */
+      items: z.array(z.object({ id: z.uuid(), qty: z.number().int().min(1).max(99) })).max(30).optional(),
       rail: z.enum(['solana', 'paypal']).default('solana'),
       /** Let the customer pay part of the bill with loyalty points. */
       usePoints: z.boolean().default(false),
@@ -413,19 +461,30 @@ shop.post('/payments', async (c) => {
   if (input.usePoints && (input.rail !== 'solana' || !config.pointsMint)) {
     throw new HTTPException(400, { message: 'Points can only be used on wallet payments, with points set up' })
   }
-  let amount: bigint
+  let amount = 0n
   try {
     // Prices are in the shop's currency, in whole pence/cents on every rail.
-    amount = toBaseUnits(input.amount, 2) * 10n ** BigInt(LEDGER_DECIMALS - 2)
+    if (input.amount) amount = toBaseUnits(input.amount, 2) * 10n ** BigInt(LEDGER_DECIMALS - 2)
   } catch (err) {
     throw new HTTPException(400, { message: (err as Error).message })
+  }
+  let label = input.label
+  let items: SaleItem[] | undefined
+  if (input.items?.length) {
+    try {
+      const basket = await priceBasket(merchant.id, input.items, amount)
+      ;({ amount, items, label } = basket)
+    } catch (err) {
+      if (err instanceof ItemError) throw new HTTPException(400, { message: err.message })
+      throw err
+    }
   }
   if (amount <= 0n) throw new HTTPException(400, { message: 'Amount must be more than zero' })
   if (amount > 1_000_000n * 10n ** BigInt(LEDGER_DECIMALS)) throw new HTTPException(400, { message: 'Amount is too large' })
   if (input.rail === 'paypal') {
     if (!config.paypal) throw new HTTPException(400, { message: 'PayPal is not set up on the server' })
     try {
-      const { payment, url } = await createPayPalPayment(merchant, amount, input.label, input.loyaltyCode || undefined)
+      const { payment, url } = await createPayPalPayment(merchant, amount, label, input.loyaltyCode || undefined, items)
       return c.json({ ...serializePayment(payment), url }, 201)
     } catch (err) {
       if (err instanceof PayPalSaleError) throw new HTTPException(400, { message: err.message })
@@ -433,7 +492,7 @@ shop.post('/payments', async (c) => {
     }
   }
   try {
-    const { payment, url } = await createPayment(merchant, amount, input.label, input.usePoints)
+    const { payment, url } = await createPayment(merchant, amount, label, input.usePoints, items)
     return c.json({ ...serializePayment(payment), url }, 201)
   } catch (err) {
     if (err instanceof FxError) throw new HTTPException(503, { message: err.message })

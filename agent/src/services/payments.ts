@@ -9,7 +9,7 @@ import {
   type VerifiedPayment,
 } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
-import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SaleItem } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { ledgerBalance, payerForCode, planPayPalRedemption } from './paypal-loyalty'
@@ -18,7 +18,7 @@ import { toTokenUnits, usdPerUnit } from '../fx'
 import { paypalPayee } from './paypal-onboarding'
 import { merchantToken } from './merchants'
 
-export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string, allowPoints = false) {
+export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string, allowPoints = false, items?: SaleItem[]) {
   // A fresh keypair's address is a guaranteed-unique reference; the private half is thrown away.
   const reference = (await generateKeyPairSigner()).address
   const token = merchantToken(merchant)
@@ -26,9 +26,9 @@ export async function createPayment(merchant: MerchantRow, amount: bigint, label
   const fxRate = await usdPerUnit(merchant.currency)
   const tokenAmount = toTokenUnits(amount, fxRate)
   const [payment] = await sql<PaymentRow[]>`
-    insert into payments (merchant_id, reference, amount, currency, token_amount, fx_rate, token_symbol, label, allow_points)
+    insert into payments (merchant_id, reference, amount, currency, token_amount, fx_rate, token_symbol, label, allow_points, items)
     values (${merchant.id}, ${reference}, ${amount.toString()}, ${merchant.currency}, ${tokenAmount.toString()},
-      ${fxRate.toString()}, ${token.symbol}, ${label ?? null}, ${allowPoints})
+      ${fxRate.toString()}, ${token.symbol}, ${label ?? null}, ${allowPoints}, ${items ? sql.json(items as never) : null})
     returning *`
   // With points on, the wallet fetches a transaction from us (Solana Pay transaction request) that also burns points.
   if (allowPoints) return { payment: payment!, url: encodeTransactionRequest(`${config.publicUrl}/pay/${payment!.id}`) }
@@ -58,7 +58,7 @@ export class PayPalSaleError extends Error {}
  * email), with Tilltide's platform fee when the shop is connected. With a loyalty code, the customer's
  * ledger points come off the bill and are held for this sale until it's paid or expires.
  */
-export async function createPayPalPayment(merchant: MerchantRow, amount: bigint, label?: string, loyaltyCode?: string) {
+export async function createPayPalPayment(merchant: MerchantRow, amount: bigint, label?: string, loyaltyCode?: string, items?: SaleItem[]) {
   const paypal = getPayPal()
   if (!paypal) throw new PayPalSaleError('PayPal is not configured on the server')
   const { payee, feeAllowed } = paypalPayee(merchant)
@@ -81,9 +81,9 @@ export async function createPayPalPayment(merchant: MerchantRow, amount: bigint,
         ? (sweepFee(redemption.toPay, config.paypalPlatform.feeBps) / 10_000n) * 10_000n // whole cents
         : 0n
     const [row] = await tx<PaymentRow[]>`
-      insert into payments (merchant_id, rail, amount, currency, token_symbol, label, points_redeemed, discount, loyalty_key, paypal_fee)
+      insert into payments (merchant_id, rail, amount, currency, token_symbol, label, points_redeemed, discount, loyalty_key, paypal_fee, items)
       values (${merchant.id}, 'paypal', ${amount.toString()}, ${merchant.currency}, 'USD', ${label ?? null}, ${redemption.points.toString()},
-        ${redemption.discount.toString()}, ${redemption.points > 0n ? loyaltyKey : null}, ${fee.toString()})
+        ${redemption.discount.toString()}, ${redemption.points > 0n ? loyaltyKey : null}, ${fee.toString()}, ${items ? sql.json(items as never) : null})
       returning *`
     return row!
   })
@@ -310,6 +310,7 @@ export function serializePayment(p: PaymentRow) {
     fxRate: (Number(p.fxRate) / 1e6).toString(),
     token: p.tokenSymbol,
     label: p.label,
+    items: p.items,
     status: p.status,
     signature: p.signature,
     payer: p.payer,

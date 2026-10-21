@@ -211,3 +211,17 @@ create table if not exists export_tokens (
 alter table payments add column if not exists points_bonus boolean not null default false;
 alter table merchants drop constraint if exists merchants_bonus_multiplier_check;
 alter table merchants add constraint merchants_bonus_multiplier_check check (bonus_multiplier between 1 and 3);
+
+-- Quick-sale items: the shop's menu, tapped into a basket on the till.
+create table if not exists items (
+  id uuid primary key default gen_random_uuid(),
+  merchant_id uuid not null references merchants(id),
+  name text not null check (length(name) between 1 and 40),
+  price bigint not null check (price > 0),
+  position int not null default 0,
+  archived boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists items_merchant_idx on items (merchant_id) where not archived;
+-- What a sale was made of, priced as at the sale: [{"id", "name", "price", "qty"}]. Null for keypad sales.
+alter table payments add column if not exists items jsonb;

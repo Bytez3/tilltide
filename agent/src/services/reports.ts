@@ -36,6 +36,9 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
     ].filter(Boolean)
     lines.push(`${day}: ${money(s.takings, c)} from ${s.paidCount} sale${s.paidCount === 1 ? '' : 's'}${rails.length ? ` (${rails.join(', ')})` : ''}. Average sale ${money(s.averageSale, c)}.`)
   }
+  if (s.items.length > 0) {
+    lines.push(`Best sellers: ${s.items.slice(0, 3).map((i) => `${i.qty}× ${i.name}`).join(', ')}.`)
+  }
   if (s.refunds.count > 0) lines.push(`${s.refunds.count} refund${s.refunds.count === 1 ? '' : 's'} (${money(s.refunds.total, c)}), so net takings ${money(s.netTakings, c)}.`)
   if (Number(s.pointsIssued) > 0 || Number(s.pointsRedeemed) > 0) {
     lines.push(`Loyalty: ${s.pointsIssued} points earned, ${s.pointsRedeemed} spent${Number(s.pointsDiscount) > 0 ? ` (${money(s.pointsDiscount, c)} off)` : ''}.`)

@@ -194,6 +194,11 @@ export default function ActivityScreen() {
         <View style={[ui.card, ui.row, { justifyContent: 'space-between' }]}>
           <View style={{ gap: 2, flexShrink: 1 }}>
             <Text style={ui.h2}>{formatMoney(item.amount, item.decimals, item.currency)}</Text>
+            {item.label && (
+              <Text style={ui.body} numberOfLines={1}>
+                {item.label}
+              </Text>
+            )}
             <Text style={ui.muted}>
               {new Date(item.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
               {item.rail === 'paypal' ? ' · PayPal' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}

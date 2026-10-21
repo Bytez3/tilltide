@@ -26,11 +26,25 @@ await tap('Save')
 await page.getByText('Saved', { exact: true }).waitFor()
 await shot('07-settings-paypal-connected')
 
+// The shop's menu: items the till taps into a sale.
+for (const [name, price] of [['Pasty', '4.50'], ['Cream tea', '6.50'], ['Coffee', '3.00'], ['Saffron bun', '2.20']]) {
+  await page.getByPlaceholder('Item, e.g. Pasty').fill(name)
+  await page.getByPlaceholder('£0.00').fill(price)
+  await tap('Add to menu')
+  await page.getByRole('button', { name: `${name} £${price} Edit` }).waitFor()
+}
+await page.getByText('Items the till can tap into a sale', { exact: false }).scrollIntoViewIfNeeded()
+await page.evaluate(() => window.scrollBy(0, -80))
+await shot('13-menu-settings')
+
 // PayPal sale.
 await tab('Charge')
-await keys('6.50')
+const tile = (name) => page.getByLabel(new RegExp(`^${name}, £`)).click()
+await tile('Pasty')
+await tile('Coffee')
+await tile('Pasty')
 await shot('01-till-paypal')
-await tap('Charge £6.50')
+await tap('Charge £12.00')
 await page.getByText('Customer approves in PayPal').waitFor()
 await shot('02-paypal-qr')
 await tap('Customer approves in PayPal')
@@ -48,6 +62,7 @@ await receipt.close()
 // Wallet sale in pounds, Seeker customer.
 await tap('New sale')
 await tap('Wallet')
+await tap('Keypad')
 await keys('4.50')
 await tap('Charge £4.50')
 await page.getByText('at today', { exact: false }).waitFor()

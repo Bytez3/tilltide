@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
@@ -25,12 +26,24 @@ export default function ChargeScreen() {
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The basket: item id → quantity. Prices come from the server's menu; the server re-prices at charge time.
+  const [basket, setBasket] = useState<Record<string, number>>({})
+  const [mode, setMode] = useState<'menu' | 'keypad' | null>(null)
+  const items = useQuery({
+    queryKey: ['items', merchant?.id],
+    queryFn: () => api.listItems(),
+    enabled: !!merchant,
+    staleTime: 60_000,
+  })
   // The sale the screen is showing. Poll responses for any other sale are ignored.
   const current = useRef<string | null>(null)
 
-  useEffect(() => () => {
-    current.current = null
-  }, [])
+  useEffect(
+    () => () => {
+      current.current = null
+    },
+    [],
+  )
 
   if (loading) return <ActivityIndicator style={{ marginTop: 48 }} color={colors.sea} />
   if (!merchant) {
@@ -67,7 +80,8 @@ export default function ChargeScreen() {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
         // Keep polling briefly (up to 30s) so the points line updates once they're minted.
         paidAt ??= Date.now()
-        if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0' || Date.now() - paidAt > 30_000) return
+        if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0' || Date.now() - paidAt > 30_000)
+          return
       } else if (latest.status !== 'pending') {
         return
       }
@@ -79,11 +93,14 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
+      const lines = Object.entries(basket).map(([id, qty]) => ({ id, qty }))
+      const typed = Number(amount) > 0 ? amount.replace(/\.$/, '') : undefined
       const created = await api.createPayment(
-        amount.replace(/\.$/, ''),
+        typed,
         activeRail,
         activeRail === 'solana' && usePoints,
         activeRail === 'paypal' && loyaltyCode.trim() ? loyaltyCode.trim() : undefined,
+        lines,
       )
       current.current = created.id
       setPayment(created)
@@ -107,6 +124,7 @@ export default function ChargeScreen() {
     current.current = null
     setPayment(null)
     setAmount('')
+    setBasket({})
     setLoyaltyCode('')
     setShowLoyalty(false)
   }
@@ -115,14 +133,19 @@ export default function ChargeScreen() {
     const display = formatMoney(payment.amount, payment.decimals, payment.currency)
     const receiptUrl = `${AppConfig.apiUrl}/r/${payment.id}`
     return (
-      <ScrollView style={[ui.screen, { backgroundColor: colors.paidBg }]} contentContainerStyle={[ui.content, { alignItems: 'center', paddingTop: 32 }]}>
+      <ScrollView
+        style={[ui.screen, { backgroundColor: colors.paidBg }]}
+        contentContainerStyle={[ui.content, { alignItems: 'center', paddingTop: 32 }]}
+      >
         <PaidTick />
         <Text style={[ui.h1, { fontSize: 44, color: colors.paid, marginTop: 8 }]}>Paid</Text>
         <Text style={[ui.h1, { fontSize: 32 }]}>{display}</Text>
         <Text style={ui.muted}>{payment.rail === 'paypal' ? 'with PayPal' : `in ${payment.token} from a wallet`}</Text>
+        {payment.items && payment.label && <Text style={[ui.body, { textAlign: 'center' }]}>{payment.label}</Text>}
         {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
           <Text style={ui.body}>
-            Used {payment.pointsRedeemed} points ({formatMoney(payment.discount, payment.decimals, payment.currency)} off)
+            Used {payment.pointsRedeemed} points ({formatMoney(payment.discount, payment.decimals, payment.currency)}{' '}
+            off)
           </Text>
         )}
         {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
@@ -138,7 +161,10 @@ export default function ChargeScreen() {
             <Text style={ui.h2}>Receipt and points</Text>
             <Text style={ui.muted}>Customer scans this with their phone camera.</Text>
             {AppConfig.sandbox && (
-              <Text style={{ color: colors.sea, fontFamily: fonts.semibold }} onPress={() => Linking.openURL(receiptUrl)}>
+              <Text
+                style={{ color: colors.sea, fontFamily: fonts.semibold }}
+                onPress={() => Linking.openURL(receiptUrl)}
+              >
                 Open receipt
               </Text>
             )}
@@ -154,9 +180,15 @@ export default function ChargeScreen() {
     return (
       <ScrollView style={ui.screen} contentContainerStyle={[ui.content, { alignItems: 'center' }]}>
         <Text style={[ui.h1, { fontSize: 40 }]}>{display}</Text>
-        {payment.rail === 'solana' && payment.tokenAmount && payment.status === 'pending' && !payment.allowPoints && payment.currency !== 'USD' && (
-          <Text style={ui.muted}>= {formatAmount(payment.tokenAmount, payment.decimals, payment.token)} at today&apos;s rate</Text>
-        )}
+        {payment.rail === 'solana' &&
+          payment.tokenAmount &&
+          payment.status === 'pending' &&
+          !payment.allowPoints &&
+          payment.currency !== 'USD' && (
+            <Text style={ui.muted}>
+              = {formatAmount(payment.tokenAmount, payment.decimals, payment.token)} at today&apos;s rate
+            </Text>
+          )}
         {payment.status === 'pending' && (
           <>
             <View style={[ui.card, { padding: 20 }]}>
@@ -164,20 +196,40 @@ export default function ChargeScreen() {
             </View>
             {payment.failureReason && (
               <Text style={[ui.body, { color: colors.warn, textAlign: 'center' }]}>
-                {payment.rail === 'paypal' ? payment.failureReason : `Something arrived but it isn't right: ${payment.failureReason}`}
+                {payment.rail === 'paypal'
+                  ? payment.failureReason
+                  : `Something arrived but it isn't right: ${payment.failureReason}`}
               </Text>
             )}
             {AppConfig.sandbox && (
               <View style={[ui.card, { alignSelf: 'stretch', borderColor: '#B4561C' }]}>
                 <Text style={ui.muted}>Sandbox: act as the customer</Text>
                 {payment.rail === 'paypal' ? (
-                  <Button title="Customer approves in PayPal" variant="secondary" onPress={() => simulate(() => api.sandbox.approvePayPal(payment.url))} />
+                  <Button
+                    title="Customer approves in PayPal"
+                    variant="secondary"
+                    onPress={() => simulate(() => api.sandbox.approvePayPal(payment.url))}
+                  />
                 ) : payment.allowPoints ? (
-                  <Button title="Customer pays, using their points" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url))} />
+                  <Button
+                    title="Customer pays, using their points"
+                    variant="secondary"
+                    onPress={() => simulate(() => api.sandbox.pay(payment.url))}
+                  />
                 ) : (
                   <>
-                    <Button title="Customer pays in full" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url))} />
-                    <Button title="Customer underpays by half" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url, (Number(payment.amount) / 2e6).toFixed(2)))} />
+                    <Button
+                      title="Customer pays in full"
+                      variant="secondary"
+                      onPress={() => simulate(() => api.sandbox.pay(payment.url))}
+                    />
+                    <Button
+                      title="Customer underpays by half"
+                      variant="secondary"
+                      onPress={() =>
+                        simulate(() => api.sandbox.pay(payment.url, (Number(payment.amount) / 2e6).toFixed(2)))
+                      }
+                    />
                   </>
                 )}
               </View>
@@ -211,11 +263,30 @@ export default function ChargeScreen() {
     )
   }
 
-  const valid = Number(amount) > 0
+  const menu = items.data ?? []
+  const activeMode = mode ?? (menu.length > 0 ? 'menu' : 'keypad')
+  const pence = (price: string) => Math.round(Number(price) * 100)
+  const basketLines = menu.filter((i) => basket[i.id]).map((i) => ({ item: i, qty: basket[i.id]! }))
+  const typedPence = Number(amount) > 0 ? pence(amount) : 0
+  const totalPence = basketLines.reduce((sum, l) => sum + pence(l.item.price) * l.qty, 0) + typedPence
+  const total = (totalPence / 100).toFixed(2)
+  const valid = totalPence > 0
+  const add = (id: string) => setBasket((b) => ({ ...b, [id]: Math.min((b[id] ?? 0) + 1, 99) }))
+  const removeOne = (id: string) =>
+    setBasket((b) => {
+      const next = { ...b }
+      if ((next[id] ?? 0) > 1) next[id]! -= 1
+      else delete next[id]
+      return next
+    })
   // Without PayPal on the server the till falls back to wallet payments.
   const activeRail: Rail = merchant.paypalEnabled ? rail : 'solana'
   const currency = merchant.currency
-  const paypalNotConnected = activeRail === 'paypal' && merchant.paypal.required && merchant.paypal.status !== 'connected' && !merchant.paypal.email
+  const paypalNotConnected =
+    activeRail === 'paypal' &&
+    merchant.paypal.required &&
+    merchant.paypal.status !== 'connected' &&
+    !merchant.paypal.email
   return (
     <ScrollView style={ui.screen} contentContainerStyle={ui.content} keyboardShouldPersistTaps="handled">
       <GettingStarted />
@@ -229,17 +300,37 @@ export default function ChargeScreen() {
       )}
       {paypalNotConnected && (
         <Text style={[ui.muted, { color: colors.warn }]}>
-          {isStaff ? 'PayPal is not set up yet. Ask the owner to connect PayPal, or take a wallet payment.' : 'Connect your PayPal in Settings to take PayPal payments.'}
+          {isStaff
+            ? 'PayPal is not set up yet. Ask the owner to connect PayPal, or take a wallet payment.'
+            : 'Connect your PayPal in Settings to take PayPal payments.'}
         </Text>
       )}
       <Text
-        style={[ui.h1, { fontSize: 60, textAlign: 'center', marginTop: 12, letterSpacing: -1 }, !amount && { color: colors.placeholder }]}
+        style={[
+          ui.h1,
+          { fontSize: 60, textAlign: 'center', marginTop: 12, letterSpacing: -1 },
+          !valid && { color: colors.placeholder },
+        ]}
         numberOfLines={1}
         adjustsFontSizeToFit
       >
         {currencySymbol(currency)}
-        {amount || '0.00'}
+        {basketLines.length ? total : amount || '0.00'}
       </Text>
+      {basketLines.length > 0 && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
+          {basketLines.map(({ item, qty }) => (
+            <Chip key={item.id} label={`${qty}× ${item.name}  −`} selected onPress={() => removeOne(item.id)} />
+          ))}
+          {typedPence > 0 && (
+            <Chip
+              label={`Other ${currencySymbol(currency)}${(typedPence / 100).toFixed(2)}  ✕`}
+              selected
+              onPress={() => setAmount('')}
+            />
+          )}
+        </View>
+      )}
       <View style={{ alignItems: 'center', minHeight: 40, justifyContent: 'center', gap: 6 }}>
         {activeRail === 'paypal' &&
           (showLoyalty || loyaltyCode ? (
@@ -260,29 +351,114 @@ export default function ChargeScreen() {
         {activeRail === 'solana' && <Text style={ui.muted}>Paid in {merchant.token} at today&apos;s rate</Text>}
         {activeRail === 'solana' && merchant.pointsMint && (
           <Chip
-            label={usePoints ? `✓ Customer can use points (up to ${merchant.redeemMaxPercent}% off)` : '+ Let them use points'}
+            label={
+              usePoints
+                ? `✓ Customer can use points (up to ${merchant.redeemMaxPercent}% off)`
+                : '+ Let them use points'
+            }
             selected={usePoints}
             onPress={() => setUsePoints((v) => !v)}
           />
         )}
       </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
-        {KEYS.map((key) => (
-          <Pressable
-            key={key}
-            onPress={() => press(key)}
-            accessibilityLabel={key === '⌫' ? 'Delete' : key}
-            style={({ pressed }) => [
-              ui.card,
-              { width: '31.5%', alignItems: 'center', paddingVertical: 16, borderRadius: 16, backgroundColor: pressed ? colors.line : colors.card },
-            ]}
-          >
-            <Text style={{ fontSize: 28, fontFamily: fonts.medium, color: colors.ink }}>{key}</Text>
-          </Pressable>
-        ))}
-      </View>
+      {menu.length > 0 && (
+        <Segmented
+          options={['menu', 'keypad'] as const}
+          value={activeMode}
+          onChange={setMode}
+          label={(m) => (m === 'menu' ? 'Menu' : 'Keypad')}
+        />
+      )}
+      {activeMode === 'menu' ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {menu.map((item) => {
+            const qty = basket[item.id] ?? 0
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() => add(item.id)}
+                onLongPress={() => qty && removeOne(item.id)}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.name}, ${currencySymbol(currency)}${Number(item.price).toFixed(2)}${qty ? `, ${qty} in the sale` : ''}`}
+                style={({ pressed }) => [
+                  ui.card,
+                  {
+                    width: '48.6%',
+                    minHeight: 76,
+                    borderRadius: 16,
+                    gap: 2,
+                    justifyContent: 'center',
+                    borderColor: qty ? colors.sea : colors.line,
+                    borderWidth: qty ? 2 : 1,
+                    backgroundColor: pressed ? colors.line : colors.card,
+                  },
+                ]}
+              >
+                <Text style={[ui.h2, { fontSize: 16 }]} numberOfLines={2}>
+                  {item.name}
+                </Text>
+                <Text style={[ui.muted, { fontFamily: fonts.semibold }]}>
+                  {currencySymbol(currency)}
+                  {Number(item.price).toFixed(2)}
+                </Text>
+                {qty > 0 && (
+                  <View
+                    style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      minWidth: 26,
+                      height: 26,
+                      borderRadius: 13,
+                      backgroundColor: colors.sea,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingHorizontal: 6,
+                    }}
+                  >
+                    <Text style={{ color: colors.seaInk, fontFamily: fonts.bold, fontSize: 13 }}>{qty}</Text>
+                  </View>
+                )}
+              </Pressable>
+            )
+          })}
+        </View>
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+          {KEYS.map((key) => (
+            <Pressable
+              key={key}
+              onPress={() => press(key)}
+              accessibilityLabel={key === '⌫' ? 'Delete' : key}
+              style={({ pressed }) => [
+                ui.card,
+                {
+                  width: '31.5%',
+                  alignItems: 'center',
+                  paddingVertical: 16,
+                  borderRadius: 16,
+                  backgroundColor: pressed ? colors.line : colors.card,
+                },
+              ]}
+            >
+              <Text style={{ fontSize: 28, fontFamily: fonts.medium, color: colors.ink }}>{key}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
-      <Button title={valid ? `Charge ${currencySymbol(currency)}${amount}` : 'Enter an amount'} onPress={charge} disabled={!valid || paypalNotConnected} loading={creating} />
+      <Button
+        title={
+          valid
+            ? `Charge ${currencySymbol(currency)}${basketLines.length ? total : amount}`
+            : activeMode === 'menu'
+              ? 'Tap items to add them'
+              : 'Enter an amount'
+        }
+        onPress={charge}
+        disabled={!valid || paypalNotConnected}
+        loading={creating}
+      />
     </ScrollView>
   )
 }

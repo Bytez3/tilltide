@@ -77,6 +77,8 @@ export interface PaymentRow {
   paypalFee: bigint
   /** For PayPal loyalty: whose points this sale spends ('paypal:<payer id>'). */
   loyaltyKey: string | null
+  /** The basket, priced as at the sale. Null when the price was typed on the keypad. */
+  items: SaleItem[] | null
 }
 
 /** Ledger amounts use 6 decimals on every rail (USDC and PYUSD are 6; PayPal USD is scaled up). */
@@ -119,4 +121,22 @@ export interface RefundRow {
   approvedAt: Date | null
   executingUntil: Date | null
   paypalAttempts: number
+}
+
+/** One line of a sale. `price` is per unit, in 6-decimal units, as a string (JSON has no bigint). `id` is null for a keypad amount. */
+export interface SaleItem {
+  id: string | null
+  name: string
+  price: string
+  qty: number
+}
+
+export interface ItemRow {
+  id: string
+  merchantId: string
+  name: string
+  price: bigint
+  position: number
+  archived: boolean
+  createdAt: Date
 }
