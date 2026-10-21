@@ -82,6 +82,17 @@ await tap('Customer approves in PayPal')
 await page.getByText('Used ', { exact: false }).waitFor()
 await shot('08-paid-with-points')
 
+// A cash sale, recorded for the books, with change worked out.
+await tap('New sale')
+await tap('Cash')
+await keys('2.20')
+await tap('+ Work out change')
+await page.getByPlaceholder(/Cash given/).fill('5')
+await page.getByText('Change: £2.80').waitFor()
+await shot('14-cash-change')
+await tap('Record cash sale £2.20')
+await page.getByText('in cash', { exact: true }).waitFor()
+
 // Activity: send takings (fee shown), refund, end of day.
 await tab('Activity')
 await tap('Send takings to owner')

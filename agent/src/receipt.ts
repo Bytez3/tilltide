@@ -90,7 +90,7 @@ export async function renderReceipt(paymentId: string) {
     <div><div class="shop">${payment.shopName}</div><div class="sub">Receipt · ${when}</div></div>
   </header>
   <div class="card hero">
-    <span class="stamp">✓ Paid${payment.rail === 'paypal' ? ' with PayPal' : ` in ${payment.tokenSymbol}`}</span>
+    <span class="stamp">✓ Paid${({ paypal: ' with PayPal', cash: ' in cash', card: ' by card' } as Record<string, string>)[payment.rail] ?? ` in ${payment.tokenSymbol}`}</span>
     <div class="amount">${symbol}${amount}</div>
     ${payment.label ? html`<div class="muted">${payment.label}</div>` : ''}
   </div>

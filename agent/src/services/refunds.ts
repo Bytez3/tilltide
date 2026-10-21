@@ -18,6 +18,9 @@ export async function proposeRefund(merchant: MerchantRow, paymentId: string, am
     const [payment] = await tx<PaymentRow[]>`
       select * from payments where id = ${paymentId} and merchant_id = ${merchant.id} for update`
     if (!payment) throw new RefundError('Payment not found for this shop')
+    if (payment.rail === 'cash' || payment.rail === 'card') {
+      throw new RefundError('Cash and card-reader sales are refunded at the counter. If it was recorded by mistake, the owner can void it.')
+    }
     if (payment.rail !== 'paypal') {
       throw new RefundError('Only PayPal payments can be refunded here. Solana payments are refunded by sending tokens back from the till wallet.')
     }

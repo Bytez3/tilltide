@@ -49,7 +49,7 @@ create table if not exists sweeps (
 alter table payments add column if not exists paypal_order_id text unique;
 alter table payments add column if not exists paypal_capture_id text;
 alter table payments drop constraint if exists payments_rail_check;
-alter table payments add constraint payments_rail_check check (rail in ('solana', 'paypal'));
+alter table payments add constraint payments_rail_check check (rail in ('solana', 'paypal', 'cash', 'card'));
 alter table payments alter column reference drop not null;
 
 -- Points issuance state machine (replaces sentinel values in points_signature).
@@ -225,3 +225,11 @@ create table if not exists items (
 create index if not exists items_merchant_idx on items (merchant_id) where not archived;
 -- What a sale was made of, priced as at the sale: [{"id", "name", "price", "qty"}]. Null for keypad sales.
 alter table payments add column if not exists items jsonb;
+
+-- Cash and card-reader sales: recorded so the day's books are complete. No money moves through Tilltide.
+alter table payments drop constraint if exists payments_rail_check;
+alter table payments add constraint payments_rail_check check (rail in ('solana', 'paypal', 'cash', 'card'));
+-- 'void': a recorded sale the owner cancelled (typed by mistake). Only cash and card sales can be voided.
+alter table payments drop constraint if exists payments_status_check;
+alter table payments add constraint payments_status_check check (status in ('pending', 'paid', 'failed', 'expired', 'void'));
+alter table payments add column if not exists voided_at timestamptz;

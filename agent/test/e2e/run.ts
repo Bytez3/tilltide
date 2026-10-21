@@ -815,7 +815,7 @@ async function main() {
 
     await step('summary splits takings by rail', async () => {
       const { body } = await api('GET', '/shop/summary', undefined, tillToken)
-      assert.deepEqual(body.summary.byRail, { solana: '10.85', paypal: '30.25' }, 'cash received; the points sale counts 1.10')
+      assert.deepEqual(body.summary.byRail, { solana: '10.85', paypal: '30.25', cash: '0', card: '0' }, 'money received; the points sale counts 1.10')
     })
 
     await step('PayPal refunds: agent proposes, owner approves with a wallet signature, PayPal refunds exactly once', async () => {
@@ -1177,12 +1177,57 @@ async function main() {
       assert.deepEqual(summary.items.map((i: any) => [i.name, i.qty]), [['Pasty', 2], ['Coffee', 1]])
     })
 
+    await step('cash and card-reader sales are recorded for the books; only the owner can void one', async () => {
+      const cash = await api('POST', '/shop/payments', { rail: 'cash', amount: '2.20', label: 'Saffron bun' }, tillToken)
+      assert.equal(cash.status, 201, JSON.stringify(cash.body))
+      assert.equal(cash.body.status, 'paid', 'recorded sales are paid at once')
+      assert.equal(cash.body.url, null)
+      assert.equal(cash.body.paypalFee, '0', 'no Tilltide fee on money that never passed through it')
+      const card = await api('POST', '/shop/payments', { rail: 'card', amount: '10.00' }, tillToken)
+      assert.equal(card.body.status, 'paid')
+      assert.equal((await api('POST', '/shop/payments', { rail: 'cash', amount: '1.00', loyaltyCode: 'AAAAA-BBBBB' }, tillToken)).status, 400)
+      assert.equal((await api('POST', '/shop/payments', { rail: 'cash', amount: '1.00', usePoints: true }, tillToken)).status, 400)
+      assert.equal((await api('POST', '/shop/payments', { rail: 'cash', amount: '0' }, tillToken)).status, 400)
+      const receipt = await fetch(`${API}/r/${cash.body.id}`).then((r) => r.text())
+      assert.match(receipt, /Paid in cash/)
+
+      // A cash sale can't be "refunded" through PayPal or swept; it's simply in the books.
+      assert.equal((await api('POST', `/shop/payments/${cash.body.id}/refunds`, {}, tillToken)).status, 409)
+      const before = (await api('GET', '/shop/summary', undefined, tillToken)).body.summary
+      assert.equal(before.byRail.cash, '2.2')
+      assert.equal(before.byRail.card, '10')
+
+      // Staff can record sales but not void them; the owner can void a mistake once.
+      const invite = await api('POST', '/shop/staff/invites', { label: 'Cash test' }, tillToken)
+      const staff = (await api('POST', '/auth/staff', { code: invite.body.code })).body.token
+      const staffCash = await api('POST', '/shop/payments', { rail: 'cash', amount: '3.00' }, staff)
+      assert.equal(staffCash.status, 201)
+      assert.equal((await api('POST', `/shop/payments/${card.body.id}/void`, undefined, staff)).status, 403)
+      const staffId = (await api('GET', '/shop/staff', undefined, tillToken)).body.find((d: any) => d.label === 'Cash test').id
+      await api('POST', `/shop/staff/${staffId}/remove`, undefined, tillToken)
+      const voided = await api('POST', `/shop/payments/${card.body.id}/void`, undefined, tillToken)
+      assert.equal(voided.status, 200, JSON.stringify(voided.body))
+      assert.equal(voided.body.status, 'void')
+      assert.equal((await api('POST', `/shop/payments/${card.body.id}/void`, undefined, tillToken)).status, 400, 'once only')
+      const other = await signIn(owner)
+      assert.equal((await api('POST', `/shop/payments/${cash.body.id}/void`, undefined, other)).status, 400, 'not another shop\'s sale')
+      const paypalSale = (await sql<any[]>`select id from payments where rail = 'paypal' and status = 'paid' limit 1`)[0].id
+      assert.equal((await api('POST', `/shop/payments/${paypalSale}/void`, undefined, tillToken)).status, 400, 'PayPal sales are refunded, not voided')
+
+      const after = (await api('GET', '/shop/summary', undefined, tillToken)).body.summary
+      assert.equal(after.byRail.card, '0', 'voided sale drops out of takings')
+      assert.equal(after.byRail.cash, '5.2')
+      assert.equal(after.voided, 1)
+    })
+
     await step('end-of-day report and CSV export (one-time link, formula-safe)', async () => {
       const made = await api('POST', '/shop/reports', {}, tillToken)
       assert.equal(made.status, 200, JSON.stringify(made.body))
       assert.match(made.body.text, /from \d+ sales \(PayPal .*, wallet .*\)\. Average sale/)
       assert.match(made.body.text, /refund/)
       assert.match(made.body.text, /Best sellers: 2× Pasty, 1× Coffee\./)
+      assert.match(made.body.text, /cash \$5\.20\)/)
+      assert.match(made.body.text, /1 cash or card sale was voided\./)
       assert.equal(made.body.narrative, null, 'no Claude key in tests: facts only')
       const list = await api('GET', '/shop/reports', undefined, tillToken)
       assert.equal(list.body[0].date, made.body.date)

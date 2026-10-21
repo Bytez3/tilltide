@@ -9,7 +9,7 @@ export const sql = postgres(config.databaseUrl, {
   onnotice: () => {},
 })
 
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired'
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired' | 'void'
 export type SweepStatus = 'proposed' | 'signing' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
 
 export interface MerchantRow {
@@ -39,7 +39,8 @@ export interface MerchantRow {
 export interface PaymentRow {
   id: string
   merchantId: string
-  rail: 'solana' | 'paypal'
+  /** 'cash' and 'card' (the shop's own card reader) are recorded sales: paid on creation, no money through Tilltide. */
+  rail: 'solana' | 'paypal' | 'cash' | 'card'
   /** Solana Pay reference key. Null for PayPal payments. */
   reference: string | null
   /** The price, in `currency`, 6-decimal units, on every rail. */

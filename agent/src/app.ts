@@ -20,7 +20,7 @@ import { isDate } from './dates'
 import { FxError } from './fx'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type ItemRow, type SaleItem, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
-import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, PayPalSaleError, serializePayment } from './services/payments'
+import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, PayPalSaleError, recordSale, serializePayment, voidSale } from './services/payments'
 import { OnboardingError, refreshPayPalConnection, startPayPalOnboarding } from './services/paypal-onboarding'
 import { PayPalError } from './paypal'
 import { approveRefund, getRefund, proposeRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
@@ -437,6 +437,16 @@ shop.delete('/items/:id', async (c) => {
   return c.json({ ok: true })
 })
 
+/** Owner only: cancel a cash or card sale that was recorded by mistake. */
+shop.post('/payments/:id/void', async (c) => {
+  const merchant = await myShop(c)
+  const id = z.uuid().safeParse(c.req.param('id'))
+  if (!id.success) throw new HTTPException(404, { message: 'Sale not found' })
+  const voided = await voidSale(merchant.id, id.data)
+  if (!voided) throw new HTTPException(400, { message: 'Only a paid cash or card sale can be voided' })
+  return c.json(serializePayment(voided))
+})
+
 /**
  * Merchant enters an amount; returns the URL to show as a QR.
  * `solana`: a Solana Pay transfer request. `paypal`: PayPal's checkout page, for customers without a wallet.
@@ -451,7 +461,8 @@ shop.post('/payments', async (c) => {
       label: z.string().max(80).optional(),
       /** A basket from the shop's item list. The server prices it; the till never sends prices. */
       items: z.array(z.object({ id: z.uuid(), qty: z.number().int().min(1).max(99) })).max(30).optional(),
-      rail: z.enum(['solana', 'paypal']).default('solana'),
+      /** 'cash' and 'card' (the shop's own reader) record a sale that was paid outside Tilltide. */
+      rail: z.enum(['solana', 'paypal', 'cash', 'card']).default('solana'),
       /** Let the customer pay part of the bill with loyalty points. */
       usePoints: z.boolean().default(false),
       /** PayPal customer's loyalty code from an earlier receipt: spends their points on this bill. */
@@ -481,6 +492,11 @@ shop.post('/payments', async (c) => {
   }
   if (amount <= 0n) throw new HTTPException(400, { message: 'Amount must be more than zero' })
   if (amount > 1_000_000n * 10n ** BigInt(LEDGER_DECIMALS)) throw new HTTPException(400, { message: 'Amount is too large' })
+  if (input.rail === 'cash' || input.rail === 'card') {
+    if (input.usePoints || input.loyaltyCode) throw new HTTPException(400, { message: 'Points are spent on PayPal and wallet sales only' })
+    const payment = await recordSale(merchant, input.rail, amount, label, items)
+    return c.json({ ...serializePayment(payment), url: null }, 201)
+  }
   if (input.rail === 'paypal') {
     if (!config.paypal) throw new HTTPException(400, { message: 'PayPal is not set up on the server' })
     try {

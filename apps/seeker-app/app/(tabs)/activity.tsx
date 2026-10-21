@@ -15,6 +15,7 @@ const STATUS_COLOUR: Record<Payment['status'], string> = {
   pending: colors.muted,
   failed: colors.danger,
   expired: colors.warn,
+  void: colors.muted,
 }
 
 export default function ActivityScreen() {
@@ -41,6 +42,7 @@ export default function ActivityScreen() {
     enabled: !!merchant && !isStaff,
   })
   const [reportBusy, setReportBusy] = useState(false)
+  const [confirmVoid, setConfirmVoid] = useState<string | null>(null)
 
   // Finished approvals clear themselves after a few seconds; anything that needs checking stays.
   useEffect(() => {
@@ -88,6 +90,23 @@ export default function ActivityScreen() {
     setError(null)
     try {
       setRefund(await api.proposeRefund(payment.id, undefined, payment.label ? `Refund for ${payment.label}` : 'Refund'))
+    } catch (e) {
+      setError(message(e))
+    }
+  }
+
+  /** Two taps: the first arms it, the second (within 4s) voids. Avoids losing a sale to a stray tap. */
+  async function voidSale(payment: Payment) {
+    if (confirmVoid !== payment.id) {
+      setConfirmVoid(payment.id)
+      setTimeout(() => setConfirmVoid((id) => (id === payment.id ? null : id)), 4000)
+      return
+    }
+    setConfirmVoid(null)
+    setError(null)
+    try {
+      await api.voidSale(payment.id)
+      refresh()
     } catch (e) {
       setError(message(e))
     }
@@ -152,7 +171,15 @@ export default function ActivityScreen() {
               </Text>
             )}
             {s && Number(s.takings) > 0 && (
-              <RailSplit paypal={Number(s.byRail.paypal)} wallet={Number(s.byRail.solana)} symbol={currencySymbol(s.token)} />
+              <RailSplit
+                parts={[
+                  { label: 'PayPal', value: Number(s.byRail.paypal), colour: colors.sea },
+                  { label: 'Wallet', value: Number(s.byRail.solana), colour: colors.seaLight },
+                  { label: 'Cash', value: Number(s.byRail.cash ?? 0), colour: colors.sand },
+                  { label: 'Card', value: Number(s.byRail.card ?? 0), colour: colors.ink },
+                ]}
+                symbol={currencySymbol(s.token)}
+              />
             )}
             {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
             {sweepAmount !== null && (
@@ -201,15 +228,20 @@ export default function ActivityScreen() {
             )}
             <Text style={ui.muted}>
               {new Date(item.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-              {item.rail === 'paypal' ? ' · PayPal' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}
+              {item.rail === 'paypal' ? ' · PayPal' : item.rail === 'cash' ? ' · Cash' : item.rail === 'card' ? ' · Card reader' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}
               {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
             </Text>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            <Text style={{ color: STATUS_COLOUR[item.status], fontFamily: fonts.semibold, textTransform: 'capitalize' }}>{item.status}</Text>
+            <Text style={{ color: STATUS_COLOUR[item.status], fontFamily: fonts.semibold, textTransform: 'capitalize' }}>{item.status === 'void' ? 'Voided' : item.status}</Text>
             {!isStaff && item.rail === 'paypal' && item.status === 'paid' && (
               <Pressable accessibilityRole="button" onPress={() => startRefund(item)}>
                 <Text style={{ color: colors.sea, fontFamily: fonts.semibold }}>Refund</Text>
+              </Pressable>
+            )}
+            {!isStaff && (item.rail === 'cash' || item.rail === 'card') && item.status === 'paid' && (
+              <Pressable accessibilityRole="button" accessibilityHint="Cancel this sale if it was recorded by mistake" onPress={() => voidSale(item)}>
+                <Text style={{ color: colors.danger, fontFamily: fonts.semibold }}>{confirmVoid === item.id ? 'Tap to confirm' : 'Void'}</Text>
               </Pressable>
             )}
           </View>
@@ -219,19 +251,21 @@ export default function ActivityScreen() {
   )
 }
 
-/** Today's takings split by how customers paid, as a two-tone bar with a legend. */
-function RailSplit({ paypal, wallet, symbol }: { paypal: number; wallet: number; symbol: string }) {
-  const total = paypal + wallet
-  if (total <= 0) return null
+/** Today's takings split by how customers paid, as a segmented bar with a legend. Empty methods are left out. */
+function RailSplit({ parts, symbol }: { parts: { label: string; value: number; colour: string }[]; symbol: string }) {
+  const shown = parts.filter((p) => p.value > 0)
+  if (shown.length === 0) return null
   return (
     <View style={{ gap: 6, marginTop: 4 }}>
-      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.line }}>
-        <View style={{ flex: paypal, backgroundColor: colors.sea }} />
-        <View style={{ flex: wallet, backgroundColor: colors.seaLight }} />
+      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.line, gap: 2 }}>
+        {shown.map((p) => (
+          <View key={p.label} style={{ flex: p.value, backgroundColor: p.colour }} />
+        ))}
       </View>
-      <View style={[ui.row, { justifyContent: 'space-between' }]}>
-        <Legend colour={colors.sea} label={`PayPal ${symbol}${paypal.toFixed(2)}`} />
-        <Legend colour={colors.seaLight} label={`Wallet ${symbol}${wallet.toFixed(2)}`} />
+      <View style={[ui.row, { flexWrap: 'wrap', columnGap: 14, rowGap: 4 }]}>
+        {shown.map((p) => (
+          <Legend key={p.label} colour={p.colour} label={`${p.label} ${symbol}${p.value.toFixed(2)}`} />
+        ))}
       </View>
     </View>
   )

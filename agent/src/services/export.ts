@@ -5,6 +5,8 @@ import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow
 const hash = (t: string) => createHash('sha256').update(t).digest('hex')
 
 /** A single-use download link token, valid for 5 minutes. */
+const PAID_WITH: Partial<Record<PaymentRow['rail'], string>> = { paypal: 'PayPal', cash: 'Cash', card: 'Card reader' }
+
 export async function createExportToken(merchant: MerchantRow, from: string, to: string) {
   const token = randomBytes(24).toString('base64url')
   await sql`
@@ -65,7 +67,7 @@ export async function exportCsv(merchant: MerchantRow, from: string, to: string)
     const received = p.status === 'paid' ? p.amount - p.discount : null
     rows.push([
       d, t, 'sale', p.status, p.label, p.currency, money(p.amount), money(p.discount), money(received),
-      p.rail === 'paypal' ? 'PayPal' : p.tokenSymbol, money(p.tokenAmount), (Number(p.fxRate) / 1e6).toString(), p.payer,
+      PAID_WITH[p.rail] ?? p.tokenSymbol, money(p.tokenAmount), (Number(p.fxRate) / 1e6).toString(), p.payer,
       p.pointsStatus === 'issued' ? p.points?.toString() : '', p.pointsRedeemed.toString(), money(p.paypalFee),
       p.signature ?? p.paypalCaptureId ?? '', p.id,
     ])

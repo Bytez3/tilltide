@@ -70,11 +70,14 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     byRail: {
       solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + cash(p), 0n), token.decimals),
       paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
+      cash: fromBaseUnits(paid.filter((p) => p.rail === 'cash').reduce((s, p) => s + p.amount, 0n), token.decimals),
+      card: fromBaseUnits(paid.filter((p) => p.rail === 'card').reduce((s, p) => s + p.amount, 0n), token.decimals),
     },
     paymentsMissingPoints: paid.filter((p) => p.rail === 'solana' && p.pointsStatus !== 'issued' && p.pointsStatus !== 'none').map((p) => p.id),
     failed: payments.filter((p) => p.status === 'failed').map((p) => ({ id: p.id, reason: p.failureReason })),
     expiredRequests: payments.filter((p) => p.status === 'expired').length,
     stillPending: payments.filter((p) => p.status === 'pending').length,
+    voided: payments.filter((p) => p.status === 'void').length,
   }
 }
 

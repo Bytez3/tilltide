@@ -13,6 +13,8 @@ import { api, Payment, Rail } from '@/lib/api'
 import { currencySymbol, formatAmount, formatMoney } from '@/lib/format'
 import { AppConfig } from '@/constants/app-config'
 
+const RAIL_LABEL: Record<Rail, string> = { paypal: 'PayPal', solana: 'Wallet', cash: 'Cash', card: 'Card' }
+
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 
 export default function ChargeScreen() {
@@ -29,6 +31,9 @@ export default function ChargeScreen() {
   // The basket: item id → quantity. Prices come from the server's menu; the server re-prices at charge time.
   const [basket, setBasket] = useState<Record<string, number>>({})
   const [mode, setMode] = useState<'menu' | 'keypad' | null>(null)
+  const [cashGiven, setCashGiven] = useState('')
+  const [showGiven, setShowGiven] = useState(false)
+  const givenPence = Number(cashGiven) > 0 ? Math.round(Number(cashGiven) * 100) : 0
   const items = useQuery({
     queryKey: ['items', merchant?.id],
     queryFn: () => api.listItems(),
@@ -103,8 +108,9 @@ export default function ChargeScreen() {
         lines,
       )
       current.current = created.id
-      setPayment(created)
-      watch(created)
+      setPayment({ ...created, url: created.url ?? '' })
+      if (created.status === 'paid') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      else watch({ ...created, url: created.url ?? '' })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -125,6 +131,8 @@ export default function ChargeScreen() {
     setPayment(null)
     setAmount('')
     setBasket({})
+    setCashGiven('')
+    setShowGiven(false)
     setLoyaltyCode('')
     setShowLoyalty(false)
   }
@@ -140,7 +148,18 @@ export default function ChargeScreen() {
         <PaidTick />
         <Text style={[ui.h1, { fontSize: 44, color: colors.paid, marginTop: 8 }]}>Paid</Text>
         <Text style={[ui.h1, { fontSize: 32 }]}>{display}</Text>
-        <Text style={ui.muted}>{payment.rail === 'paypal' ? 'with PayPal' : `in ${payment.token} from a wallet`}</Text>
+        <Text style={ui.muted}>
+          {{ paypal: 'with PayPal', cash: 'in cash', card: 'on the card reader', solana: `in ${payment.token} from a wallet` }[payment.rail]}
+        </Text>
+        {payment.rail === 'cash' && givenPence > 0 && (() => {
+          const change = givenPence - Math.round(Number(payment.amount) / 10 ** (payment.decimals - 2))
+          return change >= 0 ? (
+            <Text style={ui.h2}>
+              Change: {currencySymbol(payment.currency)}
+              {(change / 100).toFixed(2)}
+            </Text>
+          ) : null
+        })()}
         {payment.items && payment.label && <Text style={[ui.body, { textAlign: 'center' }]}>{payment.label}</Text>}
         {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
           <Text style={ui.body}>
@@ -280,7 +299,9 @@ export default function ChargeScreen() {
       return next
     })
   // Without PayPal on the server the till falls back to wallet payments.
-  const activeRail: Rail = merchant.paypalEnabled ? rail : 'solana'
+  const activeRail: Rail = !merchant.paypalEnabled && rail === 'paypal' ? 'solana' : rail
+  const recorded = activeRail === 'cash' || activeRail === 'card'
+  const railOptions: Rail[] = merchant.paypalEnabled ? ['paypal', 'solana', 'cash', 'card'] : ['solana', 'cash', 'card']
   const currency = merchant.currency
   const paypalNotConnected =
     activeRail === 'paypal' &&
@@ -290,14 +311,7 @@ export default function ChargeScreen() {
   return (
     <ScrollView style={ui.screen} contentContainerStyle={ui.content} keyboardShouldPersistTaps="handled">
       <GettingStarted />
-      {merchant.paypalEnabled && (
-        <Segmented
-          options={['paypal', 'solana'] as const}
-          value={activeRail}
-          onChange={setRail}
-          label={(r) => (r === 'solana' ? 'Wallet' : 'PayPal')}
-        />
-      )}
+      <Segmented options={railOptions} value={activeRail} onChange={setRail} label={(r) => RAIL_LABEL[r]} />
       {paypalNotConnected && (
         <Text style={[ui.muted, { color: colors.warn }]}>
           {isStaff
@@ -349,6 +363,31 @@ export default function ChargeScreen() {
             <Chip label="+ Loyalty code" onPress={() => setShowLoyalty(true)} />
           ))}
         {activeRail === 'solana' && <Text style={ui.muted}>Paid in {merchant.token} at today&apos;s rate</Text>}
+        {activeRail === 'card' && <Text style={ui.muted}>Take it on your card reader, then record it here</Text>}
+        {activeRail === 'cash' &&
+          (showGiven || cashGiven ? (
+            <View style={{ alignItems: 'center', gap: 4 }}>
+              <Input
+                placeholder={`Cash given, e.g. ${currencySymbol(currency)}20`}
+                autoFocus={!cashGiven}
+                keyboardType="decimal-pad"
+                value={cashGiven}
+                onChangeText={setCashGiven}
+                onBlur={() => !cashGiven && setShowGiven(false)}
+                maxLength={8}
+                style={{ width: 240, textAlign: 'center', paddingVertical: 8 }}
+              />
+              {givenPence > 0 && valid && (
+                <Text style={[ui.h2, { color: givenPence >= totalPence ? colors.paid : colors.warn }]}>
+                  {givenPence >= totalPence
+                    ? `Change: ${currencySymbol(currency)}${((givenPence - totalPence) / 100).toFixed(2)}`
+                    : `${currencySymbol(currency)}${((totalPence - givenPence) / 100).toFixed(2)} short`}
+                </Text>
+              )}
+            </View>
+          ) : (
+            <Chip label="+ Work out change" onPress={() => setShowGiven(true)} />
+          ))}
         {activeRail === 'solana' && merchant.pointsMint && (
           <Chip
             label={
@@ -450,7 +489,7 @@ export default function ChargeScreen() {
       <Button
         title={
           valid
-            ? `Charge ${currencySymbol(currency)}${basketLines.length ? total : amount}`
+            ? `${recorded ? `Record ${activeRail === 'cash' ? 'cash' : 'card'} sale` : 'Charge'} ${currencySymbol(currency)}${basketLines.length ? total : amount}`
             : activeMode === 'menu'
               ? 'Tap items to add them'
               : 'Enter an amount'

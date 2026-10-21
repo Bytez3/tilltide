@@ -33,7 +33,8 @@ export interface Merchant {
   }
 }
 
-export type Rail = 'solana' | 'paypal'
+/** 'cash' and 'card' (the shop's own card reader) record a sale paid outside Tilltide, for complete books. */
+export type Rail = 'solana' | 'paypal' | 'cash' | 'card'
 
 export interface Payment {
   id: string
@@ -48,7 +49,7 @@ export interface Payment {
   label: string | null
   /** The basket, when the sale was made from the item menu. Prices are per unit in `decimals` units. */
   items?: { id: string | null; name: string; price: string; qty: number }[] | null
-  status: 'pending' | 'paid' | 'failed' | 'expired'
+  status: 'pending' | 'paid' | 'failed' | 'expired' | 'void'
   signature: string | null
   payer: string | null
   failureReason: string | null
@@ -119,7 +120,8 @@ export interface DailySummary {
   stillPending: number
   refunds: { count: number; total: string }
   netTakings: string
-  byRail: { solana: string; paypal: string }
+  byRail: { solana: string; paypal: string; cash?: string; card?: string }
+  voided?: number
 }
 
 export interface ChatTurn {
@@ -190,7 +192,8 @@ export const api = {
 
   /** `amount` is typed on the keypad; with a basket it's added on top as "Other". The server prices the basket. */
   createPayment: (amount: string | undefined, rail: Rail = 'solana', usePoints = false, loyaltyCode?: string, items?: BasketLine[]) =>
-    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode, items: items?.length ? items : undefined })),
+    request<Payment & { url: string | null }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode, items: items?.length ? items : undefined })),
+  voidSale: (id: string) => request<Payment>(`/shop/payments/${id}/void`, post()),
   listItems: () => request<Item[]>('/shop/items'),
   createItem: (name: string, price: string) => request<Item>('/shop/items', post({ name, price })),
   updateItem: (id: string, changes: { name?: string; price?: string; position?: number }) =>

@@ -43,6 +43,28 @@ export async function createPayment(merchant: MerchantRow, amount: bigint, label
   return { payment: payment!, url }
 }
 
+/**
+ * A cash or card-reader sale, recorded so the day's books are complete. Nothing moves through
+ * Tilltide: it's paid as soon as it's recorded, earns no points and carries no Tilltide fee.
+ */
+export async function recordSale(merchant: MerchantRow, rail: 'cash' | 'card', amount: bigint, label?: string, items?: SaleItem[]) {
+  const [payment] = await sql<PaymentRow[]>`
+    insert into payments (merchant_id, rail, amount, currency, token_symbol, label, status, paid_at, points_status, items)
+    values (${merchant.id}, ${rail}, ${amount.toString()}, ${merchant.currency}, 'USD', ${label ?? null}, 'paid', now(), 'none',
+      ${items ? sql.json(items as never) : null})
+    returning *`
+  return payment!
+}
+
+/** The owner cancels a cash or card sale typed by mistake. It drops out of takings, reports and exports' totals. */
+export async function voidSale(merchantId: string, paymentId: string) {
+  const [row] = await sql<PaymentRow[]>`
+    update payments set status = 'void', voided_at = now()
+    where id = ${paymentId} and merchant_id = ${merchantId} and rail in ('cash', 'card') and status = 'paid'
+    returning *`
+  return row ?? null
+}
+
 let paypalClient: PayPalClient | null = null
 export function getPayPal(): PayPalClient | null {
   if (!config.paypal) return null

@@ -33,6 +33,8 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
     const rails = [
       Number(s.byRail.paypal) > 0 ? `PayPal ${money(s.byRail.paypal, c)}` : null,
       Number(s.byRail.solana) > 0 ? `wallet ${money(s.byRail.solana, c)}` : null,
+      Number(s.byRail.cash) > 0 ? `cash ${money(s.byRail.cash, c)}` : null,
+      Number(s.byRail.card) > 0 ? `card reader ${money(s.byRail.card, c)}` : null,
     ].filter(Boolean)
     lines.push(`${day}: ${money(s.takings, c)} from ${s.paidCount} sale${s.paidCount === 1 ? '' : 's'}${rails.length ? ` (${rails.join(', ')})` : ''}. Average sale ${money(s.averageSale, c)}.`)
   }
@@ -52,6 +54,7 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
     }
   }
   if (s.failed.length > 0) lines.push(`To check: ${s.failed.length} payment${s.failed.length === 1 ? '' : 's'} that didn't add up.`)
+  if (s.voided > 0) lines.push(`${s.voided} cash or card sale${s.voided === 1 ? ' was' : 's were'} voided.`)
   if (s.stillPending > 0) lines.push(`${s.stillPending} payment request${s.stillPending === 1 ? ' is' : 's are'} still open.`)
   return lines.join(' ')
 }

@@ -10,6 +10,8 @@ export const colors = {
   sea: '#0E6E6B',
   seaInk: '#FFFFFF',
   seaLight: '#7FC4BC',
+  /** Cash, in the takings bar. */
+  sand: '#D9A54A',
   paid: '#1F8A4C',
   paidBg: '#E6F2EA',
   warn: '#B4561C',
