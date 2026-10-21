@@ -1,0 +1,6 @@
+# GitBook: connect this repo (GitBook → Git Sync → GitHub) and the docs publish from docs/book.
+root: ./docs/book/
+
+structure:
+  readme: README.md
+  summary: SUMMARY.md

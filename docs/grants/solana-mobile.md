@@ -26,7 +26,7 @@
 - **Payment checks that can't be gamed:** a payment is verified from the token balance changes in the transaction itself. Junk transactions sent to the payment reference, underpayments and late payments are all handled.
 - **Loyalty:** onchain points minted to wallet payers, a ledger for PayPal payers, redemption at the till, and the Seeker bonus.
 - **Owner-signed safety:** sweeps carry an onchain memo and are locked until the chain shows the outcome. Refunds need a wallet signature over their exact wording.
-- **Quality:** a 36-scenario end-to-end suite against a local validator, run in CI on every push.
+- **Quality:** a 38-scenario end-to-end suite against a local validator, run in CI on every push.
 
 ## What the grant funds
 

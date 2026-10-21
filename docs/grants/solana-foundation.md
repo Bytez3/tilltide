@@ -25,7 +25,7 @@ Every team building point-of-sale payments on Solana rewrites the same fiddly, m
 | `sweep` | Moving takings to the owner, with an optional platform fee in the same signature and a memo that identifies the sweep onchain, so a look-alike manual transfer can never be confused for it. |
 | `tokens`, `amount` | USDC and PYUSD mints for devnet and mainnet, and bigint money with no floats. |
 
-It's tested by 9 unit tests, plus Tilltide's 36-scenario end-to-end suite against `solana-test-validator`, run in CI.
+It's tested by 9 unit tests, plus Tilltide's 38-scenario end-to-end suite against `solana-test-validator`, run in CI.
 
 ## Milestones
 

@@ -10,6 +10,10 @@ A shop runs its till on a Solana Seeker or any Android phone.
 - **Menu:** the owner sets up items (Pasty £4.50, Coffee £3.00) and the till taps them into a basket, with the keypad for anything else. The server prices every basket from the shop's own menu, so a till can't change a price, and each sale keeps a copy of what was sold at what price. Best sellers appear in the daily summary and end-of-day report, and the agent can answer "what sold best today?".
 - **Loyalty:** every customer earns points and can spend them at the till. Wallet customers' points are held onchain. PayPal customers' points are kept in Tilltide's ledger and spent with the loyalty code on their receipt. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
 
+## Docs
+
+The user guide and developer docs live in [`docs/book`](docs/book/README.md), ready for GitBook (connect the repo; `.gitbook.yaml` points at it).
+
 ## Repo
 
 | Path | What |
@@ -87,7 +91,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 36 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 38 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
