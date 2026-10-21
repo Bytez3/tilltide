@@ -22,4 +22,12 @@ The rules cap the video at 3 minutes. Record on a phone (or the browser sandbox 
 
 **Captions to add:** "PayPal Partner Referrals", "Orders v2 + platform fees", "Payments v2 refund", "PYUSD", "Claude tool use".
 
-**Screenshots for Devpost:** shots 3 (Paid ✓ with points), 4 (receipt), 6 (agent answer), 7 (wallet approval) and 8 (end-of-day report).
+**Screenshots for Devpost:** ready-made in [`screenshots/`](screenshots), captured from the sandbox at phone size:
+- the till on PayPal, the PayPal QR, and Paid ✓
+- the customer receipt with points and loyalty code
+- the wallet QR priced in £ and paid in PYUSD, with the Seeker bonus
+- PayPal connected in Settings, and a sale paid partly with points
+- sending takings with the fee shown, and a refund awaiting approval
+- the end-of-day report and staff pairing
+
+Add a screenshot of the agent answering once `ANTHROPIC_API_KEY` is set.

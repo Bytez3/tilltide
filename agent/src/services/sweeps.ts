@@ -41,7 +41,8 @@ export async function proposeSweep(merchant: MerchantRow, amount: bigint, reason
   const { treasury, bps } = config.sweepFee
   // A treasury that is the till or the owner would make the fee meaningless (or unverifiable).
   const feeApplies = treasury && treasury !== merchant.wallet && treasury !== merchant.ownerWallet
-  const fee = feeApplies ? sweepFee(amount, bps) : 0n
+  // Rounded down to a whole cent: clean amounts on the confirm card, and any rounding favours the shop.
+  const fee = feeApplies ? (sweepFee(amount, bps) / 10_000n) * 10_000n : 0n
 
   // One open proposal at a time keeps the confirm step unambiguous.
   await sql`update sweeps set status = 'cancelled' where merchant_id = ${merchant.id} and status = 'proposed'`

@@ -621,9 +621,21 @@ async function main() {
       const { proposeSweep, serializeSweep } = await import('../../src/services/sweeps')
       const { getSweepInstructions, TOKENS } = await import('@tilltide/agent-pay-kit')
       const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
-      const sweep = serializeSweep(await proposeSweep(merchant, 200_000n, null))
+      // Top the till up so the sweep is big enough to carry a fee (0.5% of 2.00 = 0.01).
+      await send(customer, [
+        getTransferCheckedInstruction({
+          source: await ata(customer.address, USDC, TOKEN),
+          mint: USDC,
+          destination: await ata(till.address, USDC, TOKEN),
+          authority: customer,
+          amount: 3_000_000n,
+          decimals: 6,
+        }),
+      ])
+      const sweep = serializeSweep(await proposeSweep(merchant, 2_000_000n, null))
+      assert.equal(sweep.feeDisplay, '0.01')
       // Full amount to the owner, no fee transfer, but with this sweep's memo.
-      const noFee = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 200_000n, sweepId: sweep.id })
+      const noFee = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 2_000_000n, sweepId: sweep.id })
       const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
       await api('POST', `/shop/sweeps/${sweep.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)
       const signature = await send(till, noFee)
@@ -651,8 +663,9 @@ async function main() {
         await sweepInstructions(sweep, TOKENS.devnet.PYUSD),
       )
       assert.equal(result.body.status, 'confirmed')
-      assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_233_750n)
-      assert.equal(await tokenBalance(treasury.address, PYUSD, TOKEN_2022), 16_250n)
+      // 0.5% of 3.25 is 0.01625, rounded down to a whole cent: 0.01 fee, 3.24 to the owner.
+      assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_240_000n)
+      assert.equal(await tokenBalance(treasury.address, PYUSD, TOKEN_2022), 10_000n)
     })
 
     await step('customer points lookup', async () => {
@@ -942,7 +955,7 @@ async function main() {
       const sweep = await api('POST', '/shop/sweeps', { amount: '0.10', reason: 'manual' }, tillToken)
       assert.equal(sweep.status, 201)
       assert.equal(sweep.body.status, 'proposed')
-      assert.equal(sweep.body.toOwner, '0.0995')
+      assert.equal(sweep.body.toOwner, '0.1', 'fee on 0.10 rounds down to nothing')
       await api('POST', `/shop/sweeps/${sweep.body.id}/cancel`, undefined, tillToken)
 
       const creamTea = (await sql<any[]>`select id from payments where label = 'Cream tea'`)[0].id
