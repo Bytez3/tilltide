@@ -1,0 +1,25 @@
+import { address, type Address } from '@solana/kit'
+import { TOKENS, type Cluster } from '@tilltide/agent-pay-kit'
+
+function required(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`Missing env var ${name}`)
+  return value
+}
+
+const cluster = (process.env.SOLANA_CLUSTER ?? 'devnet') as Cluster
+if (cluster !== 'devnet' && cluster !== 'mainnet') throw new Error(`Unknown SOLANA_CLUSTER ${cluster}`)
+
+export const config = {
+  port: Number(process.env.PORT ?? 8787),
+  databaseUrl: required('DATABASE_URL'),
+  cluster,
+  rpcUrl: process.env.SOLANA_RPC_URL ?? 'https://api.devnet.solana.com',
+  tokens: TOKENS[cluster],
+  pointsMint: process.env.POINTS_MINT ? (address(process.env.POINTS_MINT) as Address) : null,
+  pointsAuthoritySecret: process.env.POINTS_AUTHORITY_SECRET ?? null,
+  appApiKey: process.env.APP_API_KEY ?? null,
+  /** Unpaid requests stop being watched after this long. */
+  paymentTtlMs: 30 * 60 * 1000,
+  watchIntervalMs: 3000,
+}

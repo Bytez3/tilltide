@@ -11,3 +11,7 @@ ios/Pods/
 *.keystore
 id.json
 .DS_Store
+.points-authority.json
+.expo-shared/
+apps/seeker-app/android/
+apps/seeker-app/ios/

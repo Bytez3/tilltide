@@ -1,0 +1,11 @@
+{
+  "name": "tilltide",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "agent": "pnpm --filter @tilltide/agent dev",
+    "app": "pnpm --filter @tilltide/seeker-app start"
+  }
+}

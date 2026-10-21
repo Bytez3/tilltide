@@ -1,0 +1,84 @@
+import { useQuery } from '@tanstack/react-query'
+import { FlatList, RefreshControl, Text, View } from 'react-native'
+import { SetupCard } from '@/components/setup-card'
+import { colors, ui } from '@/constants/theme'
+import { useMerchant } from '@/features/merchant/merchant-provider'
+import { api, Payment } from '@/lib/api'
+import { formatAmount, shortAddress } from '@/lib/format'
+
+const STATUS_COLOUR: Record<Payment['status'], string> = {
+  paid: colors.paid,
+  pending: colors.muted,
+  failed: colors.danger,
+  expired: colors.warn,
+}
+
+export default function ActivityScreen() {
+  const { merchant } = useMerchant()
+  const payments = useQuery({
+    queryKey: ['payments', merchant?.id],
+    queryFn: () => api.listPayments(merchant!.id),
+    enabled: !!merchant,
+    refetchInterval: 10_000,
+  })
+  const summary = useQuery({
+    queryKey: ['summary', merchant?.id],
+    queryFn: () => api.getSummary(merchant!.id),
+    enabled: !!merchant,
+    refetchInterval: 30_000,
+  })
+
+  if (!merchant) {
+    return (
+      <View style={[ui.screen, ui.content]}>
+        <SetupCard />
+      </View>
+    )
+  }
+
+  const s = summary.data?.summary
+  return (
+    <FlatList
+      style={ui.screen}
+      contentContainerStyle={ui.content}
+      data={payments.data ?? []}
+      keyExtractor={(p) => p.id}
+      refreshControl={
+        <RefreshControl
+          refreshing={payments.isFetching}
+          onRefresh={() => {
+            payments.refetch()
+            summary.refetch()
+          }}
+        />
+      }
+      ListHeaderComponent={
+        <View style={ui.card}>
+          <Text style={ui.muted}>Today</Text>
+          <Text style={ui.h1}>{s ? `${Number(s.takings).toFixed(2)} ${s.token}` : '—'}</Text>
+          {s && (
+            <Text style={ui.muted}>
+              {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
+            </Text>
+          )}
+        </View>
+      }
+      ListEmptyComponent={<Text style={ui.muted}>No sales yet. Take one from the Charge tab.</Text>}
+      renderItem={({ item }) => (
+        <View style={[ui.card, ui.row, { justifyContent: 'space-between' }]}>
+          <View style={{ gap: 2 }}>
+            <Text style={ui.h2}>{formatAmount(item.amount, item.decimals, item.token)}</Text>
+            <Text style={ui.muted}>
+              {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {item.payer ? ` · ${shortAddress(item.payer)}` : ''}
+              {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
+            </Text>
+          </View>
+          <Text style={{ color: STATUS_COLOUR[item.status], fontWeight: '600', textTransform: 'capitalize' }}>
+            {item.status}
+          </Text>
+        </View>
+      )}
+    />
+  )
+}

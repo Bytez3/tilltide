@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+  - agent
+
+# Expo/Metro needs a flat node_modules in a pnpm monorepo.
+nodeLinker: hoisted
+
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+
+minimumReleaseAgeExclude:
+  - '@anthropic-ai/sdk@0.137.0'
