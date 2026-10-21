@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { FlatList, Linking, Pressable, RefreshControl, Text, View } from 'react-native'
@@ -5,7 +6,7 @@ import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
 import { Button, Input } from '@/components/ui'
-import { colors, fonts, ui } from '@/constants/theme'
+import { colors, fonts, Tint, tints, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Refund, Sweep } from '@/lib/api'
 import { currencySymbol, formatDay, formatMoney, shortAddress } from '@/lib/format'
@@ -89,7 +90,9 @@ export default function ActivityScreen() {
   async function startRefund(payment: Payment) {
     setError(null)
     try {
-      setRefund(await api.proposeRefund(payment.id, undefined, payment.label ? `Refund for ${payment.label}` : 'Refund'))
+      setRefund(
+        await api.proposeRefund(payment.id, undefined, payment.label ? `Refund for ${payment.label}` : 'Refund'),
+      )
     } catch (e) {
       setError(message(e))
     }
@@ -157,12 +160,22 @@ export default function ActivityScreen() {
           {refund && <RefundCard refund={refund} onChange={(next) => (setRefund(next), refresh())} />}
           {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
           {/* Harbour: today's takings on the teal band. */}
-          <View style={[ui.card, { backgroundColor: colors.band, borderColor: colors.band, borderRadius: 22, padding: 20 }]}>
+          <View
+            style={[ui.card, { backgroundColor: colors.band, borderColor: colors.band, borderRadius: 22, padding: 20 }]}
+          >
             <Text style={[ui.label, { color: colors.bandMuted }]}>Today</Text>
-            <Text style={[ui.money, { fontSize: 44, color: colors.bandInk }]}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
+            <Text style={[ui.money, { fontSize: 44, color: colors.bandInk }]}>
+              {s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}
+            </Text>
             {s && (
               <Text style={[ui.muted, { color: colors.bandMuted }]}>
-                {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
+                {[
+                  `${s.paidCount} sale${s.paidCount === 1 ? '' : 's'}`,
+                  s.uniqueCustomers > 0 ? `${s.uniqueCustomers} customer${s.uniqueCustomers === 1 ? '' : 's'}` : null,
+                  Number(s.pointsIssued) > 0 ? `${s.pointsIssued} points issued` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </Text>
             )}
             {s && s.refunds.count > 0 && (
@@ -183,14 +196,23 @@ export default function ActivityScreen() {
                 onBand
               />
             )}
-            {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
+            {!isStaff && sweepAmount === null && !sweep && (
+              <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />
+            )}
             {sweepAmount !== null && (
               <View style={{ gap: 8 }}>
-                <Text style={[ui.body, { color: colors.bandInk }]}>Amount to move from the till ({merchant.token})</Text>
+                <Text style={[ui.body, { color: colors.bandInk }]}>
+                  Amount to move from the till ({merchant.token})
+                </Text>
                 <Input keyboardType="decimal-pad" value={sweepAmount} onChangeText={setSweepAmount} />
                 <View style={ui.row}>
                   <Button title="Cancel" variant="secondary" onPress={() => setSweepAmount(null)} style={{ flex: 1 }} />
-                  <Button title="Review" onPress={proposeSweep} disabled={!(Number(sweepAmount) > 0)} style={{ flex: 2 }} />
+                  <Button
+                    title="Review"
+                    onPress={proposeSweep}
+                    disabled={!(Number(sweepAmount) > 0)}
+                    style={{ flex: 2 }}
+                  />
                 </View>
               </View>
             )}
@@ -198,10 +220,14 @@ export default function ActivityScreen() {
           {!isStaff && (
             <View style={ui.card}>
               <Text style={ui.h2}>End of day</Text>
-              <Text style={ui.muted}>Written automatically{merchant.closeTime ? ` at ${merchant.closeTime}` : ' at closing time'}</Text>
+              <Text style={ui.muted}>
+                Written automatically{merchant.closeTime ? ` at ${merchant.closeTime}` : ' at closing time'}
+              </Text>
               {reports.data?.[0] ? (
                 <>
-                  {reports.data[0].date !== summary.data?.summary.date && <Text style={ui.muted}>{formatDay(reports.data[0].date)}</Text>}
+                  {reports.data[0].date !== summary.data?.summary.date && (
+                    <Text style={ui.muted}>{formatDay(reports.data[0].date)}</Text>
+                  )}
                   {reports.data[0].narrative && <Text style={ui.body}>{reports.data[0].narrative}</Text>}
                   <Text style={reports.data[0].narrative ? ui.muted : ui.body}>{reports.data[0].text}</Text>
                 </>
@@ -209,7 +235,13 @@ export default function ActivityScreen() {
                 <Text style={ui.muted}>No report yet today.</Text>
               )}
               <View style={ui.row}>
-                <Button title="Write report" variant="secondary" onPress={writeReport} loading={reportBusy} style={{ flex: 1 }} />
+                <Button
+                  title="Write report"
+                  variant="secondary"
+                  onPress={writeReport}
+                  loading={reportBusy}
+                  style={{ flex: 1 }}
+                />
                 <Button title="Export CSV" variant="secondary" onPress={exportMonth} style={{ flex: 1 }} />
               </View>
             </View>
@@ -220,30 +252,55 @@ export default function ActivityScreen() {
       ListFooterComponent={<View style={{ height: 8 }} />}
       ListEmptyComponent={<Text style={ui.muted}>No sales yet. Take one from the Charge tab.</Text>}
       renderItem={({ item }) => (
-        <View style={[ui.card, ui.row, { justifyContent: 'space-between' }]}>
-          <View style={{ gap: 2, flexShrink: 1 }}>
-            <Text style={ui.h2}>{formatMoney(item.amount, item.decimals, item.currency)}</Text>
-            {item.label && (
-              <Text style={ui.body} numberOfLines={1}>
-                {item.label}
+        <View style={[ui.card, ui.row, { justifyContent: 'space-between', borderRadius: 18 }]}>
+          <View style={[ui.row, { gap: 12, flexShrink: 1, alignItems: 'flex-start' }]}>
+            <RailIcon rail={item.rail} />
+            <View style={{ gap: 2, flexShrink: 1 }}>
+              <Text
+                style={[ui.h2, item.status === 'void' && { textDecorationLine: 'line-through', color: colors.muted }]}
+              >
+                {formatMoney(item.amount, item.decimals, item.currency)}
               </Text>
-            )}
-            <Text style={ui.muted}>
-              {new Date(item.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-              {item.rail === 'paypal' ? ' · PayPal' : item.rail === 'cash' ? ' · Cash' : item.rail === 'card' ? ' · Card reader' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}
-              {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
-            </Text>
+              {item.label && (
+                <Text style={ui.body} numberOfLines={1}>
+                  {item.label}
+                </Text>
+              )}
+              <Text style={ui.muted}>
+                {new Date(item.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                {item.rail === 'paypal'
+                  ? ' · PayPal'
+                  : item.rail === 'cash'
+                    ? ' · Cash'
+                    : item.rail === 'card'
+                      ? ' · Card reader'
+                      : item.payer
+                        ? ` · ${shortAddress(item.payer)}`
+                        : ''}
+                {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
+              </Text>
+            </View>
           </View>
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
-            <Text style={{ color: STATUS_COLOUR[item.status], fontFamily: fonts.semibold, textTransform: 'capitalize' }}>{item.status === 'void' ? 'Voided' : item.status}</Text>
+            <Text
+              style={{ color: STATUS_COLOUR[item.status], fontFamily: fonts.semibold, textTransform: 'capitalize' }}
+            >
+              {item.status === 'void' ? 'Voided' : item.status}
+            </Text>
             {!isStaff && item.rail === 'paypal' && item.status === 'paid' && (
               <Pressable accessibilityRole="button" onPress={() => startRefund(item)}>
                 <Text style={{ color: colors.sea, fontFamily: fonts.semibold }}>Refund</Text>
               </Pressable>
             )}
             {!isStaff && (item.rail === 'cash' || item.rail === 'card') && item.status === 'paid' && (
-              <Pressable accessibilityRole="button" accessibilityHint="Cancel this sale if it was recorded by mistake" onPress={() => voidSale(item)}>
-                <Text style={{ color: colors.danger, fontFamily: fonts.semibold }}>{confirmVoid === item.id ? 'Tap to confirm' : 'Void'}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityHint="Cancel this sale if it was recorded by mistake"
+                onPress={() => voidSale(item)}
+              >
+                <Text style={{ color: colors.danger, fontFamily: fonts.semibold }}>
+                  {confirmVoid === item.id ? 'Tap to confirm' : 'Void'}
+                </Text>
               </Pressable>
             )}
           </View>
@@ -267,7 +324,16 @@ function RailSplit({
   if (shown.length === 0) return null
   return (
     <View style={{ gap: 6, marginTop: 4 }}>
-      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: onBand ? colors.bandChip : colors.line, gap: 2 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          height: 8,
+          borderRadius: 4,
+          overflow: 'hidden',
+          backgroundColor: onBand ? colors.bandChip : colors.line,
+          gap: 2,
+        }}
+      >
         {shown.map((p) => (
           <View key={p.label} style={{ flex: p.value, backgroundColor: p.colour }} />
         ))}
@@ -286,6 +352,32 @@ function Legend({ colour, label, onBand = false }: { colour: string; label: stri
     <View style={[ui.row, { gap: 6 }]}>
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colour }} />
       <Text style={[ui.muted, onBand && { color: colors.bandInk }]}>{label}</Text>
+    </View>
+  )
+}
+
+const RAIL_ICON: Record<Payment['rail'], { icon: keyof typeof Ionicons.glyphMap; tint: Tint }> = {
+  paypal: { icon: 'logo-paypal', tint: 'blue' },
+  solana: { icon: 'wallet-outline', tint: 'purple' },
+  cash: { icon: 'cash-outline', tint: 'green' },
+  card: { icon: 'card-outline', tint: 'amber' },
+}
+
+/** How a sale was paid, as a small coloured icon at the start of its row. */
+function RailIcon({ rail }: { rail: Payment['rail'] }) {
+  const { icon, tint } = RAIL_ICON[rail]
+  return (
+    <View
+      style={{
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        backgroundColor: tints[tint].bg,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Ionicons name={icon} size={19} color={tints[tint].fg} />
     </View>
   )
 }
