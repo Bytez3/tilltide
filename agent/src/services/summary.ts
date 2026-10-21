@@ -47,7 +47,8 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
   return {
     date,
     timezone: merchant.timezone,
-    token: token.symbol,
+    // Every rail is in US dollars 1:1 (USDC, PYUSD, PayPal USD), so the total is in USD.
+    token: 'USD',
     takings: fromBaseUnits(total, token.decimals),
     paidCount: paid.length,
     averageSale: paid.length ? fromBaseUnits(total / BigInt(paid.length), token.decimals) : '0',
@@ -72,7 +73,8 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
 export async function reconcileDay(merchant: MerchantRow, date: string) {
   const token = merchantToken(merchant)
   const payments = await getPaymentsForDay(merchant, date)
-  const known = new Set(payments.map((p) => p.signature).filter(Boolean))
+  // Only money the ledger accounts for. An underpaid transfer still moved tokens, so it must show as unmatched.
+  const known = new Set(payments.filter((p) => p.status === 'paid').map((p) => p.signature).filter(Boolean))
   const paypalPaid = payments.filter((p) => p.rail === 'paypal' && p.status === 'paid')
 
   const [tillAccount] = await findAssociatedTokenPda({

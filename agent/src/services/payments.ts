@@ -6,6 +6,7 @@ import {
   getIssuePointsInstructions,
   type VerifiedPayment,
 } from '@tilltide/agent-pay-kit'
+// SKR bonus (Seeker holders) arrives after Breakpoint; until then every customer earns the base rate.
 import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
@@ -82,10 +83,25 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
       order = await paypal.getOrder(order.id)
     }
   }
+  const pendingCapture = order.purchase_units?.[0]?.payments?.captures?.[0]
+  if (order.status === 'COMPLETED' && pendingCapture && pendingCapture.status === 'PENDING') {
+    // Captured but PayPal is still reviewing it. Keep watching; don't let it expire.
+    await sql`
+      update payments set paypal_capture_id = ${pendingCapture.id}, failure_reason = 'PayPal is reviewing this payment'
+      where id = ${payment.id} and status = 'pending'`
+    return false
+  }
+  if (order.status === 'COMPLETED' && pendingCapture && pendingCapture.status !== 'COMPLETED') {
+    await sql`
+      update payments set status = 'failed', paypal_capture_id = ${pendingCapture.id},
+        failure_reason = ${`PayPal capture ${pendingCapture.status.toLowerCase()}`}
+      where id = ${payment.id} and status = 'pending'`
+    return true
+  }
   const capture = completedCapture(order)
   if (capture) {
     await sql`
-      update payments set status = 'paid', paypal_capture_id = ${capture.id}, paid_at = now(),
+      update payments set status = 'paid', paypal_capture_id = ${capture.id}, paid_at = now(), failure_reason = null,
         payer = ${order.payer?.payer_id ? `paypal:${order.payer.payer_id}` : null}
       where id = ${payment.id} and status = 'pending'`
     return true
@@ -102,18 +118,18 @@ export async function getPayment(id: string): Promise<PaymentRow | null> {
   return row ?? null
 }
 
-/** Records the chain's verdict. Also accepts late payments that land after a request expired. */
-export async function markPaymentResult(payment: PaymentRow, result: VerifiedPayment) {
-  if (!result.ok) {
-    await sql`
-      update payments set status = 'failed', signature = ${result.signature}, failure_reason = ${result.reason}
-      where id = ${payment.id} and status in ('pending', 'expired')`
-    return
-  }
-  await sql`
+/** Records a verified payment. Also accepts late payments that land after a request expired or failed. */
+export async function markPaymentPaid(payment: PaymentRow, result: Extract<VerifiedPayment, { ok: true }>) {
+  const rows = await sql`
     update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now(),
       failure_reason = null
-    where id = ${payment.id} and status in ('pending', 'expired')`
+    where id = ${payment.id} and status in ('pending', 'expired', 'failed') returning id`
+  return rows.length > 0
+}
+
+/** Something arrived with the reference but isn't a valid payment. Stays pending (the customer can still pay) until expiry. */
+export async function notePaymentProblem(payment: PaymentRow, reason: string) {
+  await sql`update payments set failure_reason = ${reason} where id = ${payment.id} and status = 'pending'`
 }
 
 export type IssuePointsResult =

@@ -18,9 +18,12 @@ export default function ChargeScreen() {
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const poll = useRef<ReturnType<typeof setInterval> | null>(null)
+  // The sale the screen is showing. Poll responses for any other sale are ignored.
+  const current = useRef<string | null>(null)
 
-  useEffect(() => () => clearInterval(poll.current ?? undefined), [])
+  useEffect(() => () => {
+    current.current = null
+  }, [])
 
   if (loading) return <ActivityIndicator style={{ marginTop: 48 }} color={colors.sea} />
   if (!merchant) {
@@ -42,20 +45,34 @@ export default function ChargeScreen() {
     })
   }
 
+  /** Polls one sale until it settles. Waits for each response before asking again, so requests never pile up. */
+  async function watch(created: Payment & { url: string }) {
+    while (current.current === created.id) {
+      await new Promise((r) => setTimeout(r, 2000))
+      if (current.current !== created.id) return
+      const latest = await api.getPayment(created.id).catch(() => null)
+      if (current.current !== created.id) return
+      if (!latest) continue
+      setPayment({ ...latest, url: created.url })
+      if (latest.status === 'paid') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        // Keep polling briefly so the points line updates once they're minted.
+        if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0') return
+      } else if (latest.status !== 'pending') {
+        return
+      }
+    }
+  }
+
   async function charge() {
     if (!merchant) return
     setCreating(true)
     setError(null)
     try {
-      const created = await api.createPayment(merchant.id, amount.replace(/\.$/, ''), rail)
+      const created = await api.createPayment(amount.replace(/\.$/, ''), rail)
+      current.current = created.id
       setPayment(created)
-      poll.current = setInterval(async () => {
-        const latest = await api.getPayment(created.id).catch(() => null)
-        if (!latest || latest.status === 'pending') return
-        clearInterval(poll.current ?? undefined)
-        setPayment({ ...latest, url: created.url })
-        if (latest.status === 'paid') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      }, 2000)
+      watch(created)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -64,7 +81,7 @@ export default function ChargeScreen() {
   }
 
   function reset() {
-    clearInterval(poll.current ?? undefined)
+    current.current = null
     setPayment(null)
     setAmount('')
   }
@@ -79,6 +96,11 @@ export default function ChargeScreen() {
             <View style={[ui.card, { padding: 20 }]}>
               <QRCode value={payment.url} size={260} />
             </View>
+            {payment.failureReason && (
+              <Text style={[ui.body, { color: colors.warn, textAlign: 'center' }]}>
+                {payment.rail === 'paypal' ? payment.failureReason : `Something arrived but it isn't right: ${payment.failureReason}`}
+              </Text>
+            )}
             <View style={ui.row}>
               <ActivityIndicator color={colors.sea} />
               <Text style={ui.muted}>
@@ -94,9 +116,9 @@ export default function ChargeScreen() {
             <Text style={{ fontSize: 56, color: colors.paid }}>✓</Text>
             <Text style={[ui.h1, { color: colors.paid }]}>Paid</Text>
             {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
-            {payment.points && payment.points !== '0' && (
+            {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
               <Text style={ui.body}>
-                {payment.points} points {payment.pointsIssued ? 'sent to' : 'going to'} the customer
+                {payment.points} points {payment.pointsIssued ? 'sent to' : 'on their way to'} the customer
               </Text>
             )}
           </View>

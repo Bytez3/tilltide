@@ -1,29 +1,34 @@
 import { address } from '@solana/kit'
-import { findSignatureByReference, verifyPayment } from '@tilltide/agent-pay-kit'
+import { findPayment } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
 import { sql, type MerchantRow, type PaymentRow } from '../db'
 import { rpc } from '../solana'
-import { checkPayPalPayment, issuePointsForPayment, markPaymentResult } from './payments'
+import { checkPayPalPayment, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
 
-/** Checks one pending (or recently expired) payment against its rail. Returns true if its status changed. */
+/** Checks one open payment against its rail. Returns true if it became paid (or failed, for PayPal). */
 export async function checkPayment(payment: PaymentRow, merchant: MerchantRow): Promise<boolean> {
   if (payment.rail === 'paypal') return checkPayPalPayment(payment)
-  if (payment.status !== 'pending' && payment.status !== 'expired') return false
+  if (payment.status === 'paid') return false
   if (!payment.reference || payment.tokenSymbol === 'USD') return false
 
-  const signature = await findSignatureByReference(rpc, address(payment.reference))
-  if (!signature) return false
-
-  const result = await verifyPayment(rpc, signature, {
+  const found = await findPayment(rpc, address(payment.reference), {
     recipient: address(merchant.wallet),
     token: config.tokens[payment.tokenSymbol],
     amount: payment.amount,
   })
-  await markPaymentResult(payment, result)
-  if (result.ok) {
-    const points = await issuePointsForPayment(payment.id)
-    if (!points.issued) console.warn(`Points not issued for ${payment.id}: ${points.reason}`)
+  if (found.status === 'mismatch') {
+    if (found.reason !== payment.failureReason) await notePaymentProblem(payment, found.reason)
+    return false
   }
+  if (found.status !== 'paid') return false
+  if (!(await markPaymentPaid(payment, found.payment))) return false
+
+  // Points mint in the background so "Paid ✓" isn't held up by a second transaction.
+  void issuePointsForPayment(payment.id)
+    .then((points) => {
+      if (!points.issued) console.warn(`Points not issued for ${payment.id}: ${points.reason}`)
+    })
+    .catch((err) => console.error(`Points for ${payment.id} failed`, err))
   return true
 }
 
@@ -48,14 +53,17 @@ async function tick() {
   await checkAll(await sql<PaymentRow[]>`select * from payments where status = 'pending' order by created_at`)
 
   // Expire only after the final check above, so a payment that just landed isn't marked expired.
+  // Requests where something bad arrived become 'failed' (with the reason) instead.
+  // A PayPal capture under review is never expired; it's still settling.
   await sql`
-    update payments set status = 'expired'
-    where status = 'pending' and created_at < now() - ${ttl}::interval`
+    update payments set status = case when failure_reason is null then 'expired' else 'failed' end
+    where status = 'pending' and created_at < now() - ${ttl}::interval
+      and not (rail = 'paypal' and paypal_capture_id is not null)`
 
   if (ticks % 20 === 0) {
     // About once a minute: catch customers who paid an expired Solana request (the money still arrived).
     await checkAll(await sql<PaymentRow[]>`
-      select * from payments where rail = 'solana' and status = 'expired' and created_at > now() - interval '24 hours'`)
+      select * from payments where rail = 'solana' and status in ('expired', 'failed') and created_at > now() - interval '24 hours'`)
 
     // Retry points that failed or never confirmed. issuePointsForPayment checks the chain before resending.
     if (!config.pointsMint || !config.pointsAuthoritySecret) return

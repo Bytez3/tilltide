@@ -60,3 +60,22 @@ alter table payments add constraint payments_points_status_check check (points_s
 update payments set points_status = 'none', points_signature = null where points_signature = 'none';
 update payments set points_status = null, points_signature = null, points = null where points_signature = 'pending';
 update payments set points_status = 'issued' where points_signature is not null and points_status is null;
+
+-- Sign In With Solana: one-time nonces and session tokens (stored hashed).
+create table if not exists auth_nonces (
+  nonce text primary key,
+  created_at timestamptz not null default now()
+);
+create table if not exists sessions (
+  token_hash text primary key,
+  wallet text not null,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+create index if not exists sessions_wallet on sessions (wallet);
+
+-- Sweeps: 'submitted' = signed and sent, waiting for the chain. Never re-signed while submitted.
+alter table sweeps add column if not exists submitted_at timestamptz;
+alter table sweeps add column if not exists error text;
+alter table sweeps drop constraint if exists sweeps_status_check;
+alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'submitted', 'confirmed', 'cancelled'));

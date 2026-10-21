@@ -1,5 +1,4 @@
 import { isAddress } from '@solana/kit'
-import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
@@ -10,8 +9,7 @@ import { api } from '@/lib/api'
 import { shortAddress } from '@/lib/format'
 
 export default function SettingsScreen() {
-  const { merchant, update } = useMerchant()
-  const { disconnect } = useMobileWallet()
+  const { merchant, update, signOut } = useMerchant()
   const [rate, setRate] = useState('')
   const [owner, setOwner] = useState('')
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
@@ -32,9 +30,12 @@ export default function SettingsScreen() {
     setMessage(null)
     try {
       const pointsPerUnit = Number(rate)
-      if (!Number.isFinite(pointsPerUnit) || pointsPerUnit < 0) throw new Error('Points rate must be a number')
-      if (owner && !isAddress(owner)) throw new Error('Owner wallet is not a Solana address')
-      await update({ pointsPerUnit, ownerWallet: owner || null, token })
+      if (!rate.trim() || !Number.isFinite(pointsPerUnit) || pointsPerUnit < 0 || pointsPerUnit > 1000) {
+        throw new Error('Points rate must be a number from 0 to 1000')
+      }
+      const ownerWallet = owner.trim()
+      if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
+      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token })
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -95,7 +96,7 @@ export default function SettingsScreen() {
         {points && <Text style={[ui.h2, { color: colors.sea }]}>{points}</Text>}
       </View>
 
-      {merchant && <Button title="Disconnect wallet" variant="secondary" onPress={disconnect} />}
+      {merchant && <Button title="Sign out" variant="secondary" onPress={signOut} />}
     </ScrollView>
   )
 }

@@ -1,67 +1,101 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
+import { fromUint8Array } from 'js-base64'
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react'
-import { api, Merchant } from '@/lib/api'
+import { api, ApiError, Merchant, setSession } from '@/lib/api'
 
-const storageKey = (wallet: string) => `tilltide:merchant:${wallet}`
+const sessionKey = (wallet: string) => `tilltide:session:${wallet}`
 
 interface MerchantContextValue {
   merchant: Merchant | null
   loading: boolean
-  /** Connects the till wallet over MWA and registers the shop. */
-  setUp: (shopName: string) => Promise<void>
-  update: (patch: Parameters<typeof api.updateMerchant>[1]) => Promise<void>
+  /** Sign In With Solana over MWA, then register the shop if it's new. */
+  signInAndSetUp: (shopName: string) => Promise<void>
+  update: (patch: Parameters<typeof api.updateShop>[0]) => Promise<void>
+  signOut: () => Promise<void>
 }
 
 const MerchantContext = createContext<MerchantContextValue | null>(null)
 
 export function MerchantProvider({ children }: PropsWithChildren) {
-  const { account, connect } = useMobileWallet()
+  const { account, chain, identity, signIn, disconnect } = useMobileWallet()
   const [merchant, setMerchant] = useState<Merchant | null>(null)
   const [loading, setLoading] = useState(true)
 
+  const clearSession = useCallback(async (wallet?: string) => {
+    setSession(null)
+    setMerchant(null)
+    if (wallet) await AsyncStorage.removeItem(sessionKey(wallet)).catch(() => {})
+  }, [])
+
+  // Restore the session for the connected wallet.
   useEffect(() => {
     let cancelled = false
-    async function load() {
-      if (!account) {
-        setMerchant(null)
-        setLoading(false)
-        return
-      }
+    async function restore() {
       setLoading(true)
       try {
-        const id = await AsyncStorage.getItem(storageKey(account.address))
-        const found = id ? await api.getMerchant(id).catch(() => null) : null
-        if (!cancelled) setMerchant(found)
+        if (!account) return clearSession()
+        const token = await AsyncStorage.getItem(sessionKey(account.address))
+        if (!token) return clearSession()
+        setSession(token, () => clearSession(account.address))
+        const shop = await api.getShop().catch((e) => {
+          if (e instanceof ApiError && e.status === 404) return null
+          throw e
+        })
+        if (!cancelled) setMerchant(shop)
+      } catch {
+        if (!cancelled) setMerchant(null)
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
-    load()
+    restore()
     return () => {
       cancelled = true
     }
-  }, [account])
+  }, [account, clearSession])
 
-  const setUp = useCallback(
+  const signInAndSetUp = useCallback(
     async (shopName: string) => {
-      const connected = account ?? (await connect())
-      const registered = await api.registerMerchant(shopName, connected.address)
-      await AsyncStorage.setItem(storageKey(connected.address), registered.id)
-      setMerchant(registered)
+      const { nonce, domain, statement } = await api.nonce()
+      const result = await signIn({
+        domain,
+        statement,
+        uri: identity.uri,
+        version: '1',
+        chainId: chain,
+        nonce,
+        issuedAt: new Date().toISOString(),
+      })
+      const wallet = result.account.address
+      const { token } = await api.verifySignIn(wallet, fromUint8Array(result.signedMessage), fromUint8Array(result.signature))
+      await AsyncStorage.setItem(sessionKey(wallet), token)
+      setSession(token, () => clearSession(wallet))
+
+      const existing = await api.getShop().catch((e) => {
+        if (e instanceof ApiError && e.status === 404) return null
+        throw e
+      })
+      if (existing) return setMerchant(existing)
+      if (!shopName.trim()) throw new Error('Enter your shop name to set up a new till')
+      setMerchant(await api.registerShop(shopName.trim()))
     },
-    [account, connect],
+    [chain, clearSession, identity.uri, signIn],
   )
 
-  const update = useCallback(
-    async (patch: Parameters<typeof api.updateMerchant>[1]) => {
-      if (!merchant) return
-      setMerchant(await api.updateMerchant(merchant.id, patch))
-    },
-    [merchant],
-  )
+  const update = useCallback(async (patch: Parameters<typeof api.updateShop>[0]) => {
+    setMerchant(await api.updateShop(patch))
+  }, [])
 
-  return <MerchantContext.Provider value={{ merchant, loading, setUp, update }}>{children}</MerchantContext.Provider>
+  const signOut = useCallback(async () => {
+    await api.logout().catch(() => {})
+    await clearSession(account?.address)
+    await disconnect().catch(() => {})
+  }, [account?.address, clearSession, disconnect])
+
+  return (
+    <MerchantContext.Provider value={{ merchant, loading, signInAndSetUp, update, signOut }}>{children}</MerchantContext.Provider>
+  )
 }
 
 export function useMerchant() {

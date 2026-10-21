@@ -6,7 +6,7 @@ import { useMerchant } from '@/features/merchant/merchant-provider'
 
 /** First-run: name the shop and connect the till wallet over Mobile Wallet Adapter. */
 export function SetupCard() {
-  const { setUp } = useMerchant()
+  const { signInAndSetUp } = useMerchant()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -15,7 +15,7 @@ export function SetupCard() {
     setBusy(true)
     setError(null)
     try {
-      await setUp(name.trim())
+      await signInAndSetUp(name)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -25,12 +25,12 @@ export function SetupCard() {
 
   return (
     <View style={ui.card}>
-      <Text style={ui.h2}>Set up your till</Text>
+      <Text style={ui.h2}>Sign in to your till</Text>
       <Text style={ui.muted}>
-        Connect the wallet that receives payments. Your keys stay in your wallet app; Tilltide never sees them.
+        Sign in with the wallet that receives payments. Your keys stay in your wallet app; Tilltide never sees them.
       </Text>
-      <TextInput style={ui.input} placeholder="Shop name" value={name} onChangeText={setName} />
-      <Button title="Connect wallet" onPress={submit} disabled={!name.trim()} loading={busy} />
+      <TextInput style={ui.input} placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
+      <Button title="Sign in with wallet" onPress={submit} loading={busy} />
       {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}
     </View>
   )

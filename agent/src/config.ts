@@ -18,7 +18,8 @@ export const config = {
   tokens: TOKENS[cluster],
   pointsMint: process.env.POINTS_MINT ? (address(process.env.POINTS_MINT) as Address) : null,
   pointsAuthoritySecret: process.env.POINTS_AUTHORITY_SECRET ?? null,
-  appApiKey: process.env.APP_API_KEY ?? null,
+  /** Must match the host of the app's MWA identity URI; wallets show it on the sign-in prompt. */
+  authDomain: process.env.AUTH_DOMAIN ?? 'github.com',
   /** Public base URL of this API, for PayPal return links. */
   publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
   paypal:

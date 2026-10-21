@@ -24,7 +24,9 @@ A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers 
 
 **PayPal rail.** For customers without a crypto wallet, the merchant flips Charge to *PayPal*. The API creates a PayPal order (Orders v2) and the QR opens PayPal's checkout, where the customer pays with PayPal or a card. The order is captured when PayPal sends them back, or by the watcher if they close the page, and the sale lands in the same ledger. PayPal takings settle to the shop's PayPal balance and don't earn points yet.
 
-The agent (Claude, with tool use) has four tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), and `sweep_to_owner`. A sweep is only ever a **proposal**: the app shows a confirm card, the merchant signs with Mobile Wallet Adapter, and the backend verifies the transfer onchain before marking it done.
+**Sign-in.** The merchant signs in with the till wallet using Sign In With Solana over Mobile Wallet Adapter. The API checks the signature and a one-time nonce, then issues a session token. Every shop route lives under `/shop` and only ever sees the signed-in wallet's shop.
+
+The agent (Claude, with tool use) has four tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), and `sweep_to_owner`. A sweep is only ever a **proposal**: the app shows a confirm card, the merchant signs with Mobile Wallet Adapter, and the backend verifies the transfer onchain (from the till, to the owner, the right amount) before marking it done. Once a sweep is submitted it can't be signed again until the chain shows the first transaction can't land.
 
 ## Run it locally
 
@@ -52,7 +54,17 @@ Get devnet USDC for a test customer wallet from [faucet.circle.com](https://fauc
 ```bash
 pnpm test        # kit and PayPal client unit tests
 pnpm typecheck   # kit, agent and app
+pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
+
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 20 scenarios:
+- Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
+- Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
+- Points: never minted twice, even after an interrupted mint.
+- Reconciliation: money outside the ledger is flagged.
+- Sweeps: they must come from the till, a signature can't be replayed, a dropped transaction is handled, and a lost signature is recovered.
+- PayPal: capture on return, capture by the watcher, a capture held for review, and expired requests.
+- Access: one shop can't see another's payments or sweeps.
 
 ## Deploy
 
@@ -61,7 +73,7 @@ pnpm typecheck   # kit, agent and app
 ## Rules
 
 - Devnet until M4.
-- No private keys in the app. The merchant signs through Mobile Wallet Adapter.
+- No private keys in the app. The merchant signs (and signs in) through Mobile Wallet Adapter.
 - The points mint authority key lives only in server env vars.
 - The agent never moves funds. Every transfer needs the owner's tap.
 - Keep it small and shippable. Cut scope before cutting the demo.
@@ -83,4 +95,4 @@ pnpm typecheck   # kit, agent and app
 
 ## Status
 
-Built so far: M1–M3 code paths end to end, plus the PayPal rail. Verified: payment requests, reference lookup and payment verification on real devnet USDC transfers, reconciliation reads, sweep proposals, and the full PayPal create → approve → capture → paid flow against a local mock of the Orders API. Not yet run: a device build with a live wallet, points minting (the setup script needs devnet SOL), the agent against the live Claude API (needs `ANTHROPIC_API_KEY`), and PayPal's real sandbox (needs sandbox keys).
+Built: M1–M3 plus the PayPal rail and wallet sign-in. Verified by the end-to-end suite on a local validator, and payment verification also checked against real devnet USDC transfers. Not yet run: a device build with a live wallet, the agent against the live Claude API (needs `ANTHROPIC_API_KEY`), and PayPal's real sandbox (needs sandbox keys).

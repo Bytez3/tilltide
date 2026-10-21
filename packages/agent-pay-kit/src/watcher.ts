@@ -3,11 +3,18 @@ import type { PaymentToken } from './tokens'
 
 export type SolanaRpc = Rpc<SolanaRpcApi>
 
-/** Newest confirmed signature that includes `reference`, or null if the customer hasn't paid yet. */
+/** Successful signatures that include `reference`, oldest first. */
+export async function findSignaturesByReference(rpc: SolanaRpc, reference: Address): Promise<Signature[]> {
+  const sigs = await rpc.getSignaturesForAddress(reference, { limit: 1000, commitment: 'confirmed' }).send()
+  return sigs
+    .filter((s) => s.err === null)
+    .map((s) => s.signature)
+    .reverse()
+}
+
+/** Oldest successful signature that includes `reference`, or null if nothing has been sent yet. */
 export async function findSignatureByReference(rpc: SolanaRpc, reference: Address): Promise<Signature | null> {
-  const sigs = await rpc.getSignaturesForAddress(reference, { limit: 10, commitment: 'confirmed' }).send()
-  const ok = sigs.find((s) => s.err === null)
-  return ok?.signature ?? null
+  return (await findSignaturesByReference(rpc, reference))[0] ?? null
 }
 
 export interface ExpectedPayment {
@@ -19,7 +26,8 @@ export interface ExpectedPayment {
 
 export type VerifiedPayment =
   | { ok: true; signature: Signature; payer: Address | null; received: bigint; slot: bigint; blockTime: bigint | null }
-  | { ok: false; signature: Signature; reason: string }
+  /** `retryable`: the RPC hasn't caught up yet; check again rather than treating it as a bad payment. */
+  | { ok: false; signature: Signature; reason: string; retryable?: boolean }
 
 interface TokenBalance {
   mint: string
@@ -42,8 +50,8 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
   const tx = await rpc
     .getTransaction(signature, { commitment: 'confirmed', encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 })
     .send()
-  if (!tx) return { ok: false, signature, reason: 'Transaction not found' }
-  if (!tx.meta) return { ok: false, signature, reason: 'Transaction has no metadata' }
+  if (!tx) return { ok: false, signature, reason: 'Transaction not found', retryable: true }
+  if (!tx.meta) return { ok: false, signature, reason: 'Transaction has no metadata', retryable: true }
   if (tx.meta.err) return { ok: false, signature, reason: 'Transaction failed onchain' }
 
   const pre = tx.meta.preTokenBalances as readonly TokenBalance[] | undefined
@@ -69,12 +77,32 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
   return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime }
 }
 
+export type PaymentSearch =
+  | { status: 'paid'; payment: Extract<VerifiedPayment, { ok: true }> }
+  /** Something carrying the reference arrived, but none of it is a valid payment (e.g. underpaid). */
+  | { status: 'mismatch'; reason: string }
+  | { status: 'none' }
+
+/**
+ * Looks at every transaction carrying `reference` and accepts the first valid payment.
+ * Anyone can see the reference in the QR, so one bad or dust transaction must not block the real one.
+ */
+export async function findPayment(rpc: SolanaRpc, reference: Address, expected: ExpectedPayment): Promise<PaymentSearch> {
+  let mismatch: string | null = null
+  for (const signature of await findSignaturesByReference(rpc, reference)) {
+    const result = await verifyPayment(rpc, signature, expected)
+    if (result.ok) return { status: 'paid', payment: result }
+    if (!result.retryable) mismatch = result.reason
+  }
+  return mismatch ? { status: 'mismatch', reason: mismatch } : { status: 'none' }
+}
+
 export interface WaitForPaymentOptions {
   intervalMs?: number
   signal?: AbortSignal
 }
 
-/** Polls until a payment carrying `reference` is found and verified, or `signal` aborts. */
+/** Polls until a valid payment carrying `reference` arrives, or `signal` aborts. */
 export async function waitForPayment(
   rpc: SolanaRpc,
   reference: Address,
@@ -82,8 +110,8 @@ export async function waitForPayment(
   { intervalMs = 2000, signal }: WaitForPaymentOptions = {},
 ): Promise<VerifiedPayment> {
   while (!signal?.aborted) {
-    const signature = await findSignatureByReference(rpc, reference)
-    if (signature) return verifyPayment(rpc, signature, expected)
+    const found = await findPayment(rpc, reference, expected)
+    if (found.status === 'paid') return found.payment
     await new Promise((resolve) => setTimeout(resolve, intervalMs))
   }
   throw new Error('Stopped waiting for payment')

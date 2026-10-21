@@ -7,7 +7,6 @@ export interface Merchant {
   ownerWallet: string | null
   token: 'USDC' | 'PYUSD'
   pointsPerUnit: number
-  bonusMultiplier: number
   timezone: string
   cluster: 'devnet' | 'mainnet'
   pointsMint: string | null
@@ -43,8 +42,9 @@ export interface Sweep {
   token: 'USDC' | 'PYUSD'
   toWallet: string
   reason: string | null
-  status: 'proposed' | 'confirmed' | 'cancelled'
+  status: 'proposed' | 'submitted' | 'confirmed' | 'cancelled'
   signature: string | null
+  error: string | null
 }
 
 export interface DailySummary {
@@ -65,33 +65,67 @@ export interface ChatTurn {
   content: string
 }
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+  }
+}
+
+let sessionToken: string | null = null
+let onSignedOut: (() => void) | null = null
+
+/** The session from Sign In With Solana. Every /shop call carries it. */
+export function setSession(token: string | null, signedOut?: () => void) {
+  sessionToken = token
+  onSignedOut = signedOut ?? null
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${AppConfig.apiUrl}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', 'x-api-key': AppConfig.apiKey, ...init.headers },
-  })
+  let res: Response
+  try {
+    res = await fetch(`${AppConfig.apiUrl}${path}`, {
+      ...init,
+      headers: {
+        'content-type': 'application/json',
+        ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
+        ...init.headers,
+      },
+    })
+  } catch {
+    throw new ApiError("Can't reach the Tilltide server. Check your connection.", 0)
+  }
   const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`)
+  if (res.status === 401 && path.startsWith('/shop')) onSignedOut?.()
+  if (!res.ok) throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
   return body as T
 }
 
-const json = (body: unknown) => ({ method: 'POST', body: JSON.stringify(body) })
+const post = (body?: unknown) => ({ method: 'POST', body: JSON.stringify(body ?? {}) })
 
 export const api = {
-  registerMerchant: (name: string, wallet: string) => request<Merchant>('/merchants', json({ name, wallet })),
-  getMerchant: (id: string) => request<Merchant>(`/merchants/${id}`),
-  updateMerchant: (id: string, patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token'>>) =>
-    request<Merchant>(`/merchants/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  createPayment: (merchantId: string, amount: string, rail: Rail = 'solana', label?: string) =>
-    request<Payment & { url: string }>(`/merchants/${merchantId}/payments`, json({ amount, rail, label })),
-  getPayment: (id: string) => request<Payment>(`/payments/${id}`),
-  listPayments: (merchantId: string) => request<Payment[]>(`/merchants/${merchantId}/payments`),
-  getSummary: (merchantId: string) => request<{ summary: DailySummary }>(`/merchants/${merchantId}/summary`),
-  chat: (merchantId: string, messages: ChatTurn[]) =>
-    request<{ reply: string; sweeps: Sweep[] }>(`/merchants/${merchantId}/chat`, json({ messages })),
-  confirmSweep: (id: string, signature: string) => request<Sweep>(`/sweeps/${id}/confirm`, json({ signature })),
-  cancelSweep: (id: string) => request<Sweep>(`/sweeps/${id}/cancel`, json({})),
+  nonce: () => request<{ nonce: string; domain: string; statement: string }>('/auth/nonce', post()),
+  verifySignIn: (address: string, signedMessage: string, signature: string) =>
+    request<{ token: string; wallet: string }>('/auth/verify', post({ address, signedMessage, signature })),
+  logout: () => request<{ ok: true }>('/shop/logout', post()),
+
+  getShop: () => request<Merchant>('/shop'),
+  registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
+  updateShop: (patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token'>>) =>
+    request<Merchant>('/shop', { method: 'PATCH', body: JSON.stringify(patch) }),
+
+  createPayment: (amount: string, rail: Rail = 'solana', label?: string) =>
+    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, label })),
+  getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
+  listPayments: () => request<Payment[]>('/shop/payments'),
+  getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
+  chat: (messages: ChatTurn[]) => request<{ reply: string; sweeps: Sweep[] }>('/shop/chat', post({ messages })),
+
+  checkSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/check`, post()),
+  submitSweep: (id: string, signature: string) => request<Sweep>(`/shop/sweeps/${id}/submit`, post({ signature })),
+  cancelSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/cancel`, post()),
+
   getPoints: (wallet: string) => request<{ points: string; configured: boolean }>(`/points/${wallet}`),
 }

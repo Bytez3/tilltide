@@ -11,11 +11,14 @@ import {
 import { getSweepInstructions, TOKENS } from '@tilltide/agent-pay-kit'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useCallback } from 'react'
-import { api, Merchant, Sweep } from '@/lib/api'
+import { api, ApiError, Merchant, Sweep } from '@/lib/api'
 
 /**
- * Signs an agent-proposed sweep with the merchant's wallet (MWA), then reports the signature
- * so the backend can verify it. The only path by which funds leave the till.
+ * Signs an agent-proposed sweep with the merchant's wallet (MWA) and reports it to the backend,
+ * which verifies it onchain. The only path by which funds leave the till.
+ *
+ * Never signs twice: it asks the backend to settle the sweep first (which also finds a transfer the
+ * wallet sent but the app lost), and refuses while an earlier signature is still confirming.
  */
 export function useSignSweep(merchant: Merchant | null) {
   const { account, client, getTransactionSigner } = useMobileWallet()
@@ -25,6 +28,9 @@ export function useSignSweep(merchant: Merchant | null) {
       if (!account || !merchant) throw new Error('Connect the till wallet first')
       if (account.address !== merchant.wallet) throw new Error('Connected wallet is not this shop’s till wallet')
 
+      const latest = await api.checkSweep(sweep.id)
+      if (latest.status !== 'proposed') return latest
+
       const {
         context: { slot },
         value: blockhash,
@@ -33,9 +39,9 @@ export function useSignSweep(merchant: Merchant | null) {
       const signer = getTransactionSigner(account.address, slot)
       const instructions = await getSweepInstructions({
         from: signer,
-        to: address(sweep.toWallet),
-        token: TOKENS[merchant.cluster][sweep.token],
-        amount: BigInt(sweep.amount),
+        to: address(latest.toWallet),
+        token: TOKENS[merchant.cluster][latest.token],
+        amount: BigInt(latest.amount),
       })
       const message = pipe(
         createTransactionMessage({ version: 0 }),
@@ -45,17 +51,26 @@ export function useSignSweep(merchant: Merchant | null) {
       )
       const signature = getBase58Decoder().decode(await signAndSendTransactionMessageWithSigners(message))
 
-      // The backend checks the transfer landed before marking the sweep confirmed.
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          return await api.confirmSweep(sweep.id, signature)
-        } catch (e) {
-          if (attempt === 9) throw e
-          await new Promise((r) => setTimeout(r, 2000))
-        }
+      // Report straight away; from now on the backend won't let this sweep be signed again.
+      let result = await submitWithRetry(sweep.id, signature)
+      for (let i = 0; i < 30 && result.status === 'submitted'; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        result = await api.checkSweep(sweep.id).catch(() => result)
       }
-      throw new Error('Unreachable')
+      return result
     },
     [account, client, getTransactionSigner, merchant],
   )
+}
+
+async function submitWithRetry(id: string, signature: string): Promise<Sweep> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api.submitSweep(id, signature)
+    } catch (e) {
+      // Only network failures are worth retrying; a 400 means the backend rejected it.
+      if (!(e instanceof ApiError) || e.status !== 0 || attempt >= 5) throw e
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+  }
 }

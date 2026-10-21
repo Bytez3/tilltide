@@ -10,7 +10,7 @@ export const sql = postgres(config.databaseUrl, {
 })
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired'
-export type SweepStatus = 'proposed' | 'confirmed' | 'cancelled'
+export type SweepStatus = 'proposed' | 'submitted' | 'confirmed' | 'cancelled'
 
 export interface MerchantRow {
   id: string
@@ -62,5 +62,7 @@ export interface SweepRow {
   reason: string | null
   status: SweepStatus
   signature: string | null
+  submittedAt: Date | null
+  error: string | null
   createdAt: Date
 }

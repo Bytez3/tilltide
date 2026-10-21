@@ -37,7 +37,7 @@ export default function AgentScreen() {
     setThinking(true)
     setError(null)
     try {
-      const { reply, sweeps } = await api.chat(merchant.id, next)
+      const { reply, sweeps } = await api.chat(next)
       setTurns([...next, { role: 'assistant', content: reply }])
       if (sweeps.length) setSweep(sweeps.at(-1)!)
     } catch (e) {
@@ -63,8 +63,14 @@ export default function AgentScreen() {
 
   async function cancelSweep() {
     if (!sweep) return
-    await api.cancelSweep(sweep.id).catch(() => null)
-    setSweep(null)
+    try {
+      await api.cancelSweep(sweep.id)
+      setSweep(null)
+    } catch (e) {
+      // It may already be on its way; show the real state instead of hiding it.
+      setError(e instanceof Error ? e.message : String(e))
+      setSweep(await api.checkSweep(sweep.id).catch(() => sweep))
+    }
   }
 
   return (
@@ -98,12 +104,22 @@ export default function AgentScreen() {
         {sweep && (
           <View style={[ui.card, { borderColor: colors.sea, borderWidth: 1 }]}>
             <Text style={ui.muted}>Proposed sweep</Text>
+            {/* Shown exactly as it will be signed. */}
             <Text style={ui.h1}>
-              {Number(sweep.display).toFixed(2)} {sweep.token}
+              {sweep.display} {sweep.token}
             </Text>
             <Text style={ui.body}>To owner wallet {shortAddress(sweep.toWallet)}</Text>
+            <Text style={[ui.muted, { fontFamily: 'monospace' }]} selectable>
+              {sweep.toWallet}
+            </Text>
             {sweep.reason && <Text style={ui.muted}>{sweep.reason}</Text>}
-            {sweep.status === 'proposed' ? (
+            {sweep.error && <Text style={[ui.muted, { color: colors.warn }]}>{sweep.error}</Text>}
+            {sweep.status === 'submitted' ? (
+              <View style={ui.row}>
+                <ActivityIndicator color={colors.sea} />
+                <Text style={ui.muted}>Confirming on the chain…</Text>
+              </View>
+            ) : sweep.status === 'proposed' ? (
               <View style={ui.row}>
                 <Button title="Cancel" variant="secondary" onPress={cancelSweep} style={{ flex: 1 }} />
                 <Button title="Confirm & sign" onPress={confirmSweep} loading={signing} style={{ flex: 2 }} />

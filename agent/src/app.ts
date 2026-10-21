@@ -1,18 +1,18 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { address, isAddress, type Signature } from '@solana/kit'
+import { address, isAddress, isSignature, type Signature } from '@solana/kit'
 import { toBaseUnits } from '@tilltide/agent-pay-kit'
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
 import { Hono } from 'hono'
-import { createMiddleware } from 'hono/factory'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
+import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from './db'
-import { getMerchant, merchantToken } from './services/merchants'
+import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
-import { confirmSweep, serializeSweep } from './services/sweeps'
+import { getSweep, serializeSweep, settleSweep, submitSweep, SweepError } from './services/sweeps'
 import { checkPayment } from './services/watcher'
 import { rpc } from './solana'
 
@@ -34,12 +34,6 @@ async function body<T extends z.ZodType>(c: { req: { json(): Promise<unknown> } 
   return parsed.data
 }
 
-async function merchantOr404(id: string): Promise<MerchantRow> {
-  const merchant = isUuid(id) ? await getMerchant(id) : null
-  if (!merchant) throw new HTTPException(404, { message: 'Merchant not found' })
-  return merchant
-}
-
 function serializeMerchant(m: MerchantRow) {
   return {
     id: m.id,
@@ -48,7 +42,6 @@ function serializeMerchant(m: MerchantRow) {
     ownerWallet: m.ownerWallet,
     token: m.tokenSymbol,
     pointsPerUnit: Number(m.pointsPerUnit),
-    bonusMultiplier: Number(m.bonusMultiplier),
     timezone: m.timezone,
     cluster: config.cluster,
     pointsMint: config.pointsMint,
@@ -66,7 +59,7 @@ app.onError((err, c) => {
 
 app.get('/health', (c) => c.json({ ok: true, cluster: config.cluster }))
 
-// Customer-facing reads (points balance) are public; merchant routes need the app key.
+// Customer-facing reads (points balance) are public; shop routes need a signed-in till wallet.
 app.get('/points/:wallet', async (c) => {
   const owner = c.req.param('wallet')
   if (!isAddress(owner)) throw new HTTPException(400, { message: 'Not a Solana address' })
@@ -102,49 +95,87 @@ app.get('/paypal/return', async (c) => {
 
 app.get('/paypal/cancel', (c) => c.html(page('Payment cancelled', 'No money was taken.')))
 
-const requireAppKey = createMiddleware(async (c, next) => {
-  if (config.appApiKey && c.req.header('x-api-key') !== config.appApiKey) {
-    throw new HTTPException(401, { message: 'Bad API key' })
+// ---- Sign In With Solana -------------------------------------------------------------
+
+app.post('/auth/nonce', async (c) => c.json(await createNonce()))
+
+app.post('/auth/verify', async (c) => {
+  const input = await body(
+    c,
+    z.object({ address: z.string(), signedMessage: z.base64().max(4000), signature: z.base64().max(200) }),
+  )
+  try {
+    const session = await verifySignIn({
+      address: input.address,
+      signedMessage: new Uint8Array(Buffer.from(input.signedMessage, 'base64')),
+      signature: new Uint8Array(Buffer.from(input.signature, 'base64')),
+    })
+    return c.json(session)
+  } catch (err) {
+    if (err instanceof AuthError) throw new HTTPException(401, { message: err.message })
+    throw err
   }
+})
+
+// ---- The signed-in shop ---------------------------------------------------------------
+// Everything under /shop is scoped to the wallet that signed in. There is no way to name another shop.
+
+type ShopEnv = { Variables: { wallet: string; token: string } }
+const shop = new Hono<ShopEnv>()
+
+shop.use(async (c, next) => {
+  const token = c.req.header('authorization')?.match(/^Bearer (.+)$/)?.[1]
+  const wallet = token ? await walletForToken(token) : null
+  if (!wallet || !token) throw new HTTPException(401, { message: 'Sign in again' })
+  c.set('wallet', wallet)
+  c.set('token', token)
   await next()
 })
-app.use('/merchants', requireAppKey)
-app.use('/merchants/*', requireAppKey)
-app.use('/payments/*', requireAppKey)
-app.use('/sweeps/*', requireAppKey)
 
-/** Register or fetch the shop for a connected till wallet. */
-app.post('/merchants', async (c) => {
-  const input = await body(c, z.object({ name: z.string().min(1).max(80), wallet }))
+shop.post('/logout', async (c) => {
+  await revokeToken(c.get('token'))
+  return c.json({ ok: true })
+})
+
+async function myShop(c: { get(key: 'wallet'): string }): Promise<MerchantRow> {
+  const [merchant] = await sql<MerchantRow[]>`select * from merchants where wallet = ${c.get('wallet')}`
+  if (!merchant) throw new HTTPException(404, { message: 'No shop for this wallet yet' })
+  return merchant
+}
+
+shop.get('/', async (c) => c.json(serializeMerchant(await myShop(c))))
+
+/** Registers the shop for the signed-in till wallet (or returns it if it exists). */
+shop.post('/', async (c) => {
+  const input = await body(c, z.object({ name: z.string().trim().min(1).max(80) }))
   const [row] = await sql<MerchantRow[]>`
-    insert into merchants (name, wallet) values (${input.name}, ${input.wallet})
+    insert into merchants (name, wallet) values (${input.name}, ${c.get('wallet')})
     on conflict (wallet) do update set wallet = excluded.wallet
     returning *`
   return c.json(serializeMerchant(row!))
 })
 
-app.get('/merchants/:id', async (c) => c.json(serializeMerchant(await merchantOr404(c.req.param('id')))))
-
-app.patch('/merchants/:id', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.patch('/', async (c) => {
+  const merchant = await myShop(c)
   const input = await body(
     c,
     z.object({
-      name: z.string().min(1).max(80).optional(),
+      name: z.string().trim().min(1).max(80).optional(),
       ownerWallet: wallet.nullable().optional(),
       token: z.enum(['USDC', 'PYUSD']).optional(),
       pointsPerUnit: z.number().min(0).max(1000).optional(),
-      bonusMultiplier: z.number().min(1).max(10).optional(),
       timezone: timezone.optional(),
     }),
   )
+  if (input.ownerWallet && input.ownerWallet === merchant.wallet) {
+    throw new HTTPException(400, { message: 'The owner wallet must be different from the till wallet' })
+  }
   const [row] = await sql<MerchantRow[]>`
     update merchants set
       name = ${input.name ?? merchant.name},
       owner_wallet = ${input.ownerWallet === undefined ? merchant.ownerWallet : input.ownerWallet},
       token_symbol = ${input.token ?? merchant.tokenSymbol},
       points_per_unit = ${input.pointsPerUnit ?? merchant.pointsPerUnit},
-      bonus_multiplier = ${input.bonusMultiplier ?? merchant.bonusMultiplier},
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
@@ -154,12 +185,12 @@ app.patch('/merchants/:id', async (c) => {
  * Merchant enters an amount; returns the URL to show as a QR.
  * `solana`: a Solana Pay transfer request. `paypal`: PayPal's checkout page, for customers without a wallet.
  */
-app.post('/merchants/:id/payments', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.post('/payments', async (c) => {
+  const merchant = await myShop(c)
   const input = await body(
     c,
     z.object({
-      amount: z.string(),
+      amount: z.string().max(20),
       label: z.string().max(80).optional(),
       rail: z.enum(['solana', 'paypal']).default('solana'),
     }),
@@ -173,6 +204,7 @@ app.post('/merchants/:id/payments', async (c) => {
     throw new HTTPException(400, { message: (err as Error).message })
   }
   if (amount <= 0n) throw new HTTPException(400, { message: 'Amount must be more than zero' })
+  if (amount > 1_000_000n * 10n ** BigInt(LEDGER_DECIMALS)) throw new HTTPException(400, { message: 'Amount is too large' })
   if (input.rail === 'paypal') {
     if (!config.paypal) throw new HTTPException(400, { message: 'PayPal is not set up on the server' })
     try {
@@ -186,28 +218,30 @@ app.post('/merchants/:id/payments', async (c) => {
   return c.json({ ...serializePayment(payment), url }, 201)
 })
 
-app.get('/merchants/:id/payments', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.get('/payments', async (c) => {
+  const merchant = await myShop(c)
   const rows = await sql<PaymentRow[]>`
     select * from payments where merchant_id = ${merchant.id} order by created_at desc limit 50`
   return c.json(rows.map(serializePayment))
 })
 
-/** The app polls this while the QR is on screen. Also checks the chain directly so "Paid ✓" shows fast. */
-app.get('/payments/:id', async (c) => {
+/** The app polls this while the QR is on screen. Also checks the rail directly so "Paid ✓" shows fast. */
+shop.get('/payments/:id', async (c) => {
+  const merchant = await myShop(c)
   const id = c.req.param('id')
-  let payment = isUuid(id) ? await getPayment(id) : null
-  if (!payment) throw new HTTPException(404, { message: 'Payment not found' })
-  // Expired Solana requests are re-checked too: a customer may have paid late, and the money did arrive.
-  if (payment.status === 'pending' || (payment.status === 'expired' && payment.rail === 'solana')) {
-    const merchant = (await getMerchant(payment.merchantId))!
-    if (await checkPayment(payment, merchant).catch(() => false)) payment = (await getPayment(id))!
-  }
+  const [found] = isUuid(id) ? await sql<PaymentRow[]>`select * from payments where id = ${id} and merchant_id = ${merchant.id}` : []
+  if (!found) throw new HTTPException(404, { message: 'Payment not found' })
+  let payment = found
+  // Open requests, plus recently closed Solana ones: a customer may have paid late, and the money did arrive.
+  const recheck =
+    payment.status === 'pending' ||
+    (payment.rail === 'solana' && payment.status !== 'paid' && Date.now() - payment.createdAt.getTime() < 86_400_000)
+  if (recheck && (await checkPayment(payment, merchant).catch(() => false))) payment = (await getPayment(id))!
   return c.json(serializePayment(payment))
 })
 
-app.get('/merchants/:id/summary', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.get('/summary', async (c) => {
+  const merchant = await myShop(c)
   const date = c.req.query('date') ?? todayIn(merchant.timezone)
   if (!isDate(date)) throw new HTTPException(400, { message: 'date must be YYYY-MM-DD' })
   const reconcile = c.req.query('reconcile') === 'true'
@@ -217,8 +251,8 @@ app.get('/merchants/:id/summary', async (c) => {
   })
 })
 
-app.post('/merchants/:id/chat', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.post('/chat', async (c) => {
+  const merchant = await myShop(c)
   const input = await body(
     c,
     z.object({
@@ -242,29 +276,45 @@ app.post('/merchants/:id/chat', async (c) => {
   }
 })
 
-app.get('/merchants/:id/sweeps', async (c) => {
-  const merchant = await merchantOr404(c.req.param('id'))
+shop.get('/sweeps', async (c) => {
+  const merchant = await myShop(c)
   const rows = await sql<SweepRow[]>`
     select * from sweeps where merchant_id = ${merchant.id} order by created_at desc limit 20`
   return c.json(rows.map(serializeSweep))
 })
 
-/** The app calls this after the owner signed the sweep in their wallet. */
-app.post('/sweeps/:id/confirm', async (c) => {
-  if (!isUuid(c.req.param('id'))) throw new HTTPException(404, { message: 'Sweep not found' })
-  const input = await body(c, z.object({ signature: z.string().min(64).max(100) }))
+async function mySweep(c: { get(key: 'wallet'): string; req: { param(name: 'id'): string } }) {
+  const merchant = await myShop(c)
+  const id = c.req.param('id')
+  const sweep = isUuid(id) ? await getSweep(merchant, id) : null
+  if (!sweep) throw new HTTPException(404, { message: 'Sweep not found' })
+  return { merchant, sweep }
+}
+
+/** Brings a sweep up to date with the chain. The app calls this before signing and while confirming. */
+shop.post('/sweeps/:id/check', async (c) => {
+  const { merchant, sweep } = await mySweep(c)
+  return c.json(serializeSweep(await settleSweep(merchant, sweep)))
+})
+
+/** The app calls this as soon as the wallet has signed and sent the sweep. */
+shop.post('/sweeps/:id/submit', async (c) => {
+  const { merchant, sweep } = await mySweep(c)
+  const input = await body(c, z.object({ signature: z.string().refine(isSignature, 'Not a transaction signature') }))
   try {
-    return c.json(serializeSweep(await confirmSweep(c.req.param('id'), input.signature as Signature)))
+    return c.json(serializeSweep(await submitSweep(merchant, sweep.id, input.signature as Signature)))
   } catch (err) {
-    throw new HTTPException(400, { message: (err as Error).message })
+    if (err instanceof SweepError) throw new HTTPException(400, { message: err.message })
+    throw err
   }
 })
 
-app.post('/sweeps/:id/cancel', async (c) => {
-  if (!isUuid(c.req.param('id'))) throw new HTTPException(404, { message: 'No open sweep with that id' })
+shop.post('/sweeps/:id/cancel', async (c) => {
+  const { sweep } = await mySweep(c)
   const [row] = await sql<SweepRow[]>`
-    update sweeps set status = 'cancelled' where id = ${c.req.param('id')} and status = 'proposed' returning *`
-  if (!row) throw new HTTPException(404, { message: 'No open sweep with that id' })
+    update sweeps set status = 'cancelled' where id = ${sweep.id} and status = 'proposed' returning *`
+  if (!row) throw new HTTPException(400, { message: `Sweep is ${sweep.status}; only a proposal can be cancelled` })
   return c.json(serializeSweep(row))
 })
 
+app.route('/shop', shop)

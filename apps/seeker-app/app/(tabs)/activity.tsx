@@ -17,13 +17,13 @@ export default function ActivityScreen() {
   const { merchant } = useMerchant()
   const payments = useQuery({
     queryKey: ['payments', merchant?.id],
-    queryFn: () => api.listPayments(merchant!.id),
+    queryFn: () => api.listPayments(),
     enabled: !!merchant,
     refetchInterval: 10_000,
   })
   const summary = useQuery({
     queryKey: ['summary', merchant?.id],
-    queryFn: () => api.getSummary(merchant!.id),
+    queryFn: () => api.getSummary(),
     enabled: !!merchant,
     refetchInterval: 30_000,
   })
