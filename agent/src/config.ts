@@ -46,6 +46,8 @@ export const config = {
     treasury: process.env.TREASURY_WALLET ? (address(process.env.TREASURY_WALLET) as Address) : null,
     bps: feeBps,
   },
+  /** Browser origins allowed to call the API (the web sandbox). The mobile app doesn't need CORS. */
+  corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   /** Shared secret Cloudflare adds as x-tilltide-origin. When set, requests without it are refused. */
   originSecret: process.env.ORIGIN_SECRET || null,
   rateLimits: {

@@ -28,6 +28,15 @@ A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers 
 
 The agent (Claude, with tool use) has five tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), `sweep_to_owner`, and `refund_paypal_payment`. A PayPal refund is also only a proposal: the owner approves it by signing the refund's exact wording with their wallet, and the server refunds through PayPal with an idempotency key, so it can never refund twice. A sweep is only ever a **proposal**: the app shows a confirm card, and the merchant signs with Mobile Wallet Adapter. The transaction carries a `tilltide:sweep:<id>` memo. Before marking the sweep done, the backend checks that memo onchain, that it came from the till, that it went to the owner, and that the amount is right. A look-alike manual transfer never counts. Once a sweep is submitted it can't be signed again until the chain shows the first transaction can't land.
 
+## Try it in a browser (sandbox)
+
+```bash
+pnpm --filter @tilltide/agent sandbox          # local Solana chain + API on :8787 (needs the Postgres container)
+pnpm --filter @tilltide/seeker-app web:sandbox # the app on http://localhost:8081
+```
+
+The sandbox runs a local Solana validator with test USDC and PYUSD, a funded test customer, loyalty points, and a stand-in PayPal. In the browser, a local test wallet signs in place of the phone wallet (it refuses to run outside the sandbox). The QR screen gets "act as the customer" buttons, so you can click through a whole day: charge, pay, points, send takings to the owner with the fee, and PayPal refunds. Agent chat needs `ANTHROPIC_API_KEY` in `agent/.env.sandbox`.
+
 ## Run it locally
 
 Needs Node 22, pnpm, Docker, Android Studio (emulator or a device), and an MWA wallet on the device (e.g. Phantom or Solflare, set to devnet).
@@ -57,7 +66,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 28 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 29 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.

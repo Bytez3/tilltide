@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import Anthropic from '@anthropic-ai/sdk'
 import { address, isAddress, isSignature, type Signature } from '@solana/kit'
-import { toBaseUnits } from '@tilltide/agent-pay-kit'
+import { fromBaseUnits, toBaseUnits } from '@tilltide/agent-pay-kit'
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
+import { cors } from 'hono/cors'
 import { secureHeaders } from 'hono/secure-headers'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
@@ -17,9 +18,9 @@ import { isDate } from './dates'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
-import { approveRefund, getRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
+import { approveRefund, getRefund, proposeRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
-import { beginSweep, getSweep, serializeSweep, settleSweep, submitSweep, SweepError } from './services/sweeps'
+import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
 import { checkPayment } from './services/watcher'
 import { rpc } from './solana'
 
@@ -62,6 +63,9 @@ function serializeMerchant(m: MerchantRow) {
 
 export const app = new Hono()
 
+if (config.corsOrigins.length) {
+  app.use(cors({ origin: config.corsOrigins, allowHeaders: ['content-type', 'authorization'], allowMethods: ['GET', 'POST', 'PATCH'] }))
+}
 app.use(requireOrigin(config.originSecret))
 const ip = (c: Context) => clientIp(c, Boolean(config.originSecret))
 app.use(secureHeaders())
@@ -322,6 +326,32 @@ shop.get('/sweeps', async (c) => {
   return c.json(rows.map(serializeSweep))
 })
 
+/** What the till holds right now, for pre-filling a sweep. */
+shop.get('/till', async (c) => {
+  const merchant = await myShop(c)
+  const token = merchantToken(merchant)
+  const balance = await tillBalance(merchant)
+  return c.json({ token: token.symbol, balance: balance.toString(), display: fromBaseUnits(balance, token.decimals) })
+})
+
+/** The owner proposes a sweep themselves (the agent can too). Still needs their wallet signature to move. */
+shop.post('/sweeps', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ amount: z.string().max(20), reason: z.string().max(200).optional() }))
+  let amount: bigint
+  try {
+    amount = toBaseUnits(input.amount, merchantToken(merchant).decimals)
+  } catch (err) {
+    throw new HTTPException(400, { message: (err as Error).message })
+  }
+  try {
+    return c.json(serializeSweep(await proposeSweep(merchant, amount, input.reason ?? null)), 201)
+  } catch (err) {
+    if (err instanceof SweepError) throw new HTTPException(409, { message: err.message })
+    throw err
+  }
+})
+
 async function mySweep(c: { get(key: 'wallet'): string; req: { param(name: 'id'): string } }) {
   const merchant = await myShop(c)
   const id = c.req.param('id')
@@ -366,6 +396,21 @@ shop.post('/sweeps/:id/cancel', async (c) => {
     update sweeps set status = 'cancelled' where id = ${sweep.id} and status = 'proposed' returning *`
   if (!row) throw new HTTPException(400, { message: `Sweep is ${sweep.status}; only a proposal can be cancelled` })
   return c.json(serializeSweep(row))
+})
+
+/** The owner starts a PayPal refund themselves (the agent can too). Still needs their wallet signature. */
+shop.post('/payments/:id/refunds', async (c) => {
+  const merchant = await myShop(c)
+  const id = c.req.param('id')
+  if (!isUuid(id)) throw new HTTPException(404, { message: 'Payment not found' })
+  const input = await body(c, z.object({ amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional(), reason: z.string().max(200).optional() }))
+  try {
+    const refund = await proposeRefund(merchant, id, input.amount ? toBaseUnits(input.amount, LEDGER_DECIMALS) : null, input.reason ?? null)
+    return c.json(serializeRefund(refund), 201)
+  } catch (err) {
+    if (err instanceof RefundError) throw new HTTPException(409, { message: err.message })
+    throw err
+  }
 })
 
 shop.get('/refunds', async (c) => {

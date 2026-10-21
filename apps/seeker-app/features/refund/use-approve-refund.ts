@@ -1,14 +1,14 @@
-import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { fromUint8Array } from 'js-base64'
 import { useCallback } from 'react'
 import { api, ApiError, Refund } from '@/lib/api'
+import { useWallet } from '@/features/wallet/wallet'
 
 /**
  * Approves a PayPal refund by having the till wallet sign the refund's exact wording (Sign In With
  * Solana format, single-use nonce). The server refunds through PayPal only after checking it.
  */
 export function useApproveRefund() {
-  const { chain, identity, signIn } = useMobileWallet()
+  const { signIn } = useWallet()
 
   return useCallback(
     async (refund: Refund): Promise<Refund> => {
@@ -18,7 +18,7 @@ export function useApproveRefund() {
       if (latest.status === 'processing') return api.approveRefund(latest.id)
       if (latest.status !== 'proposed') return latest
       const { nonce, domain, statement } = await api.refundChallenge(latest.id)
-      const signed = await signIn({ domain, statement, uri: identity.uri, version: '1', chainId: chain, nonce })
+      const signed = await signIn({ domain, statement, nonce })
       const signedMessage = fromUint8Array(signed.signedMessage)
       const signature = fromUint8Array(signed.signature)
       for (let attempt = 0; ; attempt++) {
@@ -36,6 +36,6 @@ export function useApproveRefund() {
         }
       }
     },
-    [chain, identity.uri, signIn],
+    [signIn],
   )
 }

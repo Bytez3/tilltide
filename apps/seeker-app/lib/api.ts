@@ -149,9 +149,21 @@ export const api = {
 
   beginSweep: (id: string, lastValidBlockHeight: bigint) =>
     request<Sweep>(`/shop/sweeps/${id}/begin`, post({ lastValidBlockHeight: lastValidBlockHeight.toString() })),
+  till: () => request<{ token: string; balance: string; display: string }>('/shop/till'),
+  proposeSweep: (amount: string, reason?: string) => request<Sweep>('/shop/sweeps', post({ amount, reason })),
+  proposeRefund: (paymentId: string, amount?: string, reason?: string) =>
+    request<Refund>(`/shop/payments/${paymentId}/refunds`, post({ amount, reason })),
   checkSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/check`, post()),
   submitSweep: (id: string, signature: string) => request<Sweep>(`/shop/sweeps/${id}/submit`, post({ signature })),
   cancelSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/cancel`, post()),
+
+  // Local browser sandbox only (the server has no /sandbox routes anywhere else).
+  sandbox: {
+    info: () => request<{ customer: string; owner: string; customerBalances: { USDC: string; PYUSD: string } }>('/sandbox'),
+    airdrop: (address: string) => request<{ ok: true }>('/sandbox/airdrop', post({ address })),
+    pay: (url: string, amount?: string) => request<{ ok: true; signature: string }>('/sandbox/pay', post({ url, amount })),
+    approvePayPal: (url: string) => request<{ ok: true }>('/sandbox/paypal/approve', post({ url })),
+  },
 
   getPoints: (wallet: string) => request<{ points: string; configured: boolean }>(`/points/${wallet}`),
 }

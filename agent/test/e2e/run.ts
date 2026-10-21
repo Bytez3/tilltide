@@ -16,6 +16,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
+import { PYUSD, sleep, startLocalValidator, startMockPayPal, TOKEN, TOKEN_2022, until, USDC } from '../support/local-chain'
 import postgres from 'postgres'
 import {
   AccountRole,
@@ -43,10 +44,6 @@ const API = `http://127.0.0.1:${API_PORT}`
 const ADMIN_DB = process.env.E2E_ADMIN_DATABASE_URL ?? 'postgres://tilltide:tilltide@localhost:5432/tilltide'
 const E2E_DB = 'tilltide_e2e'
 
-const USDC = address('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
-const PYUSD = address('CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM')
-const TOKEN = address('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
-const TOKEN_2022 = address('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 
 let passed = 0
 async function step(name: string, fn: () => Promise<void>) {
@@ -54,128 +51,6 @@ async function step(name: string, fn: () => Promise<void>) {
   await fn()
   passed++
   console.log('ok')
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
-
-async function until<T>(what: string, fn: () => Promise<T | null | undefined | false>, timeoutMs = 30_000): Promise<T> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const value = await fn()
-    if (value) return value
-    await sleep(500)
-  }
-  throw new Error(`Timed out waiting for ${what}`)
-}
-
-/** Copies a real devnet mint and swaps in our own mint authority. */
-function mintAccountFile(dir: string, mint: Address, authority: Address): string {
-  const raw = JSON.parse(execFileSync('solana', ['account', mint, '-u', 'devnet', '--output', 'json'], { encoding: 'utf8' }))
-  const data = Buffer.from(raw.account.data[0], 'base64')
-  data.writeUInt32LE(1, 0) // COption::Some
-  Buffer.from(getAddressEncoder().encode(authority)).copy(data, 4)
-  raw.account.data = [data.toString('base64'), 'base64']
-  raw.account.rentEpoch = 0 // u64::MAX doesn't survive JSON.parse
-  const file = join(dir, `${mint}.json`)
-  writeFileSync(file, JSON.stringify(raw))
-  return file
-}
-
-/** In-process stand-in for PayPal Orders v2. `approve(id)` is the customer approving; `holdForReview` makes the next capture PENDING. */
-function startMockPayPal(port: number) {
-  const orders = new Map<string, any>()
-  let n = 0
-  const state = {
-    holdForReview: false,
-    captures: 0,
-    refundCalls: 0,
-    failNextRefund: false, // 503 before anything happens
-    loseNextResponse: false, // refund happens, then the response is lost (503)
-    rejectNextRefund: false, // 422 and nothing happens
-    pendingRefunds: false, // new refunds start PENDING
-  }
-  const refundsByRequestId = new Map<string, any>()
-  const server = createServer(async (req, res) => {
-    let body = ''
-    for await (const chunk of req) body += chunk
-    const send = (status: number, json: unknown) => {
-      res.writeHead(status, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(json))
-    }
-    const url = new URL(req.url!, 'http://x')
-    if (url.pathname === '/v1/oauth2/token') return send(200, { access_token: 'mock', expires_in: 3600 })
-    if (req.method === 'POST' && url.pathname === '/v2/checkout/orders') {
-      const input = JSON.parse(body)
-      const id = `ORDER${++n}`
-      const order = {
-        id,
-        status: 'PAYER_ACTION_REQUIRED',
-        purchase_units: input.purchase_units,
-        links: [{ rel: 'payer-action', href: `https://sandbox.paypal.test/checkoutnow?token=${id}` }],
-      }
-      orders.set(id, order)
-      return send(201, order)
-    }
-    const refundMatch = url.pathname.match(/^\/v2\/payments\/captures\/([^/]+)\/refund$/)
-    if (req.method === 'POST' && refundMatch) {
-      state.refundCalls++
-      if (state.failNextRefund) {
-        state.failNextRefund = false
-        return send(503, { message: 'Service unavailable' })
-      }
-      if (state.rejectNextRefund) {
-        state.rejectNextRefund = false
-        return send(422, { message: 'Unprocessable', details: [{ issue: 'TRANSACTION_REFUSED' }] })
-      }
-      // Real PayPal returns the original refund for a repeated PayPal-Request-Id.
-      const requestId = String(req.headers['paypal-request-id'])
-      if (!refundsByRequestId.has(requestId)) {
-        const capture = refundMatch[1]!
-        const amount = JSON.parse(body).amount
-        const order = [...orders.values()].find((o) => o.purchase_units[0].payments?.captures?.[0]?.id === capture)
-        const already = [...refundsByRequestId.values()].filter((r) => r.capture === capture).reduce((t, r) => t + Number(r.amount.value), 0)
-        if (already + Number(amount.value) > Number(order.purchase_units[0].amount.value) + 1e-9) {
-          return send(422, { message: 'Refund exceeds captured amount', details: [{ issue: 'REFUND_AMOUNT_EXCEEDED' }] })
-        }
-        refundsByRequestId.set(requestId, { id: `REFUND${refundsByRequestId.size + 1}`, status: state.pendingRefunds ? 'PENDING' : 'COMPLETED', amount, capture })
-      }
-      if (state.loseNextResponse) {
-        state.loseNextResponse = false
-        return send(503, { message: 'Gateway timeout' })
-      }
-      return send(201, refundsByRequestId.get(requestId))
-    }
-    const refundGet = url.pathname.match(/^\/v2\/payments\/refunds\/([^/]+)$/)
-    if (req.method === 'GET' && refundGet) {
-      const r = [...refundsByRequestId.values()].find((x) => x.id === refundGet[1])
-      return r ? send(200, r) : send(404, { message: 'not found' })
-    }
-    const m = url.pathname.match(/^\/v2\/checkout\/orders\/([^/]+)(\/capture)?$/)
-    const order = m && orders.get(m[1]!)
-    if (!order) return send(404, { message: 'not found' })
-    if (m![2]) {
-      if (order.status === 'COMPLETED') return send(422, { message: 'Already captured', details: [{ issue: 'ORDER_ALREADY_CAPTURED' }] })
-      if (order.status !== 'APPROVED') return send(422, { message: 'Not approved', details: [{ issue: 'ORDER_NOT_APPROVED' }] })
-      state.captures++
-      order.status = 'COMPLETED'
-      order.payer = { payer_id: 'BUYER1' }
-      const status = state.holdForReview ? 'PENDING' : 'COMPLETED'
-      order.purchase_units[0].payments = { captures: [{ id: `CAP-${order.id}`, status, amount: order.purchase_units[0].amount }] }
-    }
-    return send(200, order)
-  })
-  server.listen(port)
-  return {
-    state,
-    approve: (id: string) => (orders.get(id).status = 'APPROVED'),
-    releaseReview: (id: string) => (orders.get(id).purchase_units[0].payments.captures[0].status = 'COMPLETED'),
-    order: (id: string) => orders.get(id),
-    refunds: () => [...refundsByRequestId.values()],
-    completePendingRefunds: () => {
-      for (const r of refundsByRequestId.values()) if (r.status === 'PENDING') r.status = 'COMPLETED'
-    },
-    close: () => server.close(),
-  }
 }
 
 async function main() {
@@ -187,28 +62,12 @@ async function main() {
   })()
 
   console.log('Starting local validator…')
-  const validator = spawn(
-    'solana-test-validator',
-    [
-      '--reset', '--quiet', '--ledger', join(dir, 'ledger'), '--rpc-port', String(RPC_PORT),
-      '--faucet-port', String(RPC_PORT + 1000), '--gossip-port', String(RPC_PORT + 2000),
-      '--dynamic-port-range', `${RPC_PORT + 3000}-${RPC_PORT + 3100}`,
-      '--account', USDC, mintAccountFile(dir, USDC, tokenAuthority.address),
-      '--account', PYUSD, mintAccountFile(dir, PYUSD, tokenAuthority.address),
-    ],
-    { stdio: process.env.E2E_VERBOSE ? 'inherit' : 'ignore' },
-  )
-  let validatorExit: string | null = null
-  validator.on('exit', (code) => (validatorExit = `solana-test-validator exited with code ${code}`))
-  const rpc = createSolanaRpc(RPC_URL)
-  await until(
-    'validator',
-    () => {
-      if (validatorExit) throw new Error(`${validatorExit} (rerun with E2E_VERBOSE=1)`)
-      return rpc.getHealth().send().then((h) => h === 'ok').catch(() => false)
-    },
-    60_000,
-  )
+  const { rpc, stop: stopValidator } = await startLocalValidator({
+    port: RPC_PORT,
+    ledgerDir: join(dir, 'ledger'),
+    tokenAuthority: tokenAuthority.address,
+    verbose: Boolean(process.env.E2E_VERBOSE),
+  })
 
   const admin = postgres(ADMIN_DB)
   await admin.unsafe(`drop database if exists ${E2E_DB} with (force)`)
@@ -915,6 +774,30 @@ async function main() {
       assert.equal((await api('POST', `/shop/refunds/${last.id}/challenge`, undefined, other)).status, 404)
     })
 
+    await step('owners can start sweeps and refunds themselves (still wallet-signed to move money)', async () => {
+      await api('PATCH', '/shop', { token: 'USDC' }, tillToken)
+      const till_ = await api('GET', '/shop/till', undefined, tillToken)
+      assert.equal(till_.status, 200)
+      assert.equal(till_.body.token, 'USDC')
+      assert.ok(Number(till_.body.display) > 0)
+      assert.equal((await api('POST', '/shop/sweeps', { amount: '99999' }, tillToken)).status, 409)
+      assert.equal((await api('POST', '/shop/sweeps', { amount: 'abc' }, tillToken)).status, 400)
+      const sweep = await api('POST', '/shop/sweeps', { amount: '0.10', reason: 'manual' }, tillToken)
+      assert.equal(sweep.status, 201)
+      assert.equal(sweep.body.status, 'proposed')
+      assert.equal(sweep.body.toOwner, '0.0995')
+      await api('POST', `/shop/sweeps/${sweep.body.id}/cancel`, undefined, tillToken)
+
+      const creamTea = (await sql<any[]>`select id from payments where label = 'Cream tea'`)[0].id
+      const refund = await api('POST', `/shop/payments/${creamTea}/refunds`, { amount: '1.00', reason: 'manual' }, tillToken)
+      assert.equal(refund.status, 201, JSON.stringify(refund.body))
+      assert.equal(refund.body.status, 'proposed')
+      assert.equal((await api('POST', `/shop/payments/${firstPaymentId}/refunds`, {}, tillToken)).status, 409, 'Solana payments are not PayPal-refundable')
+      await api('POST', `/shop/refunds/${refund.body.id}/cancel`, undefined, tillToken)
+      const other = await signIn(owner)
+      assert.equal((await api('POST', `/shop/payments/${creamTea}/refunds`, {}, other)).status, 409, "another shop can't refund it")
+    })
+
     await step('no sweep fee when the treasury is the shop\'s own owner wallet', async () => {
       const { proposeSweep } = await import('../../src/services/sweeps')
       const other = await signIn(owner)
@@ -994,7 +877,7 @@ async function main() {
     await sql.end()
   } finally {
     server?.close()
-    validator.kill('SIGINT')
+    stopValidator()
   }
 }
 

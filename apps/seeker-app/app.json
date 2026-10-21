@@ -21,7 +21,7 @@
       "package": "com.bytez3.tilltide"
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [

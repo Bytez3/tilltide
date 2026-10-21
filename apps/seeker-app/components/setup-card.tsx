@@ -3,10 +3,12 @@ import { Text, TextInput, View } from 'react-native'
 import { Button } from '@/components/ui'
 import { ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
+import { useWallet } from '@/features/wallet/wallet'
 
 /** First-run: name the shop and connect the till wallet over Mobile Wallet Adapter. */
 export function SetupCard() {
   const { signInAndSetUp } = useMerchant()
+  const { isTestWallet } = useWallet()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,6 +36,11 @@ export function SetupCard() {
       <Text style={ui.muted}>
         Sign in with the wallet that receives payments. Your keys stay in your wallet app; Tilltide never sees them.
       </Text>
+      {isTestWallet && (
+        <Text style={[ui.muted, { color: '#B4561C' }]}>
+          Browser sandbox: signing uses a local test wallet on a local test chain. No real money.
+        </Text>
+      )}
       <TextInput style={ui.input} placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
       <Button title="Sign in with wallet" onPress={submit} loading={busy} />
       {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}

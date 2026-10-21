@@ -8,6 +8,7 @@ import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Rail } from '@/lib/api'
 import { formatAmount } from '@/lib/format'
+import { AppConfig } from '@/constants/app-config'
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 
@@ -83,6 +84,14 @@ export default function ChargeScreen() {
     }
   }
 
+  async function simulate(action: () => Promise<unknown>) {
+    try {
+      await action()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   function reset() {
     current.current = null
     setPayment(null)
@@ -103,6 +112,19 @@ export default function ChargeScreen() {
               <Text style={[ui.body, { color: colors.warn, textAlign: 'center' }]}>
                 {payment.rail === 'paypal' ? payment.failureReason : `Something arrived but it isn't right: ${payment.failureReason}`}
               </Text>
+            )}
+            {AppConfig.sandbox && (
+              <View style={[ui.card, { alignSelf: 'stretch', borderColor: '#B4561C' }]}>
+                <Text style={ui.muted}>Sandbox: act as the customer</Text>
+                {payment.rail === 'paypal' ? (
+                  <Button title="Customer approves in PayPal" variant="secondary" onPress={() => simulate(() => api.sandbox.approvePayPal(payment.url))} />
+                ) : (
+                  <>
+                    <Button title="Customer pays in full" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url))} />
+                    <Button title="Customer underpays by half" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url, (Number(payment.amount) / 2e6).toFixed(2)))} />
+                  </>
+                )}
+              </View>
             )}
             <View style={ui.row}>
               <ActivityIndicator color={colors.sea} />
@@ -136,6 +158,7 @@ export default function ChargeScreen() {
             {payment.failureReason && <Text style={ui.muted}>{payment.failureReason}</Text>}
           </View>
         )}
+        {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
         <Button
           title={payment.status === 'pending' ? 'Cancel' : 'New sale'}
           variant={payment.status === 'pending' ? 'secondary' : 'primary'}

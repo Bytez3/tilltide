@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { fromUint8Array } from 'js-base64'
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react'
 import { api, ApiError, Merchant, setSession } from '@/lib/api'
+import { useWallet } from '@/features/wallet/wallet'
+import { AppConfig } from '@/constants/app-config'
 
 const sessionKey = (wallet: string) => `tilltide:session:${wallet}`
 
@@ -18,7 +19,7 @@ interface MerchantContextValue {
 const MerchantContext = createContext<MerchantContextValue | null>(null)
 
 export function MerchantProvider({ children }: PropsWithChildren) {
-  const { account, chain, identity, signIn, disconnect } = useMobileWallet()
+  const { account, signIn, disconnect, isTestWallet } = useWallet()
   const [merchant, setMerchant] = useState<Merchant | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -58,21 +59,14 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   const signInAndSetUp = useCallback(
     async (shopName: string) => {
       const { nonce, domain, statement } = await api.nonce()
-      const result = await signIn({
-        domain,
-        statement,
-        uri: identity.uri,
-        version: '1',
-        chainId: chain,
-        nonce,
-        issuedAt: new Date().toISOString(),
-      })
-      // The signing account is in the SIWS message itself (line 2). The hook's `account` can still point at
-      // a previously selected account on wallets with several.
-      const wallet = new TextDecoder().decode(result.signedMessage).split('\n')[1]?.trim() ?? result.account.address
+      const result = await signIn({ domain, statement, nonce })
+      const wallet = result.address
       const { token } = await api.verifySignIn(wallet, fromUint8Array(result.signedMessage), fromUint8Array(result.signature))
       await AsyncStorage.setItem(sessionKey(wallet), token)
       setSession(token, () => clearSession(wallet))
+
+      // Browser sandbox: give the test wallet SOL for fees.
+      if (isTestWallet && AppConfig.sandbox) await api.sandbox.airdrop(wallet).catch(() => {})
 
       const existing = await api.getShop().catch((e) => {
         if (e instanceof ApiError && e.status === 404) return null
@@ -80,9 +74,15 @@ export function MerchantProvider({ children }: PropsWithChildren) {
       })
       if (existing) return setMerchant(existing)
       if (!shopName.trim()) throw new Error('Enter your shop name to set up a new till')
-      setMerchant(await api.registerShop(shopName.trim()))
+      let shop = await api.registerShop(shopName.trim())
+      // Sandbox: preset the test owner wallet so sweeps work straight away.
+      if (isTestWallet && AppConfig.sandbox) {
+        const info = await api.sandbox.info().catch(() => null)
+        if (info) shop = await api.updateShop({ ownerWallet: info.owner })
+      }
+      setMerchant(shop)
     },
-    [chain, clearSession, identity.uri, signIn],
+    [clearSession, isTestWallet, signIn],
   )
 
   const update = useCallback(async (patch: Parameters<typeof api.updateShop>[0]) => {
