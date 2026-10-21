@@ -26,6 +26,12 @@ A shop runs its till on a Solana Seeker or any Android phone.
 
 **Spending points.** With "Let the customer use their points" switched on, the QR is a Solana Pay *transaction request*. The customer's wallet fetches a transaction from the API that pays the rest of the bill and burns the points, in one signature. The sale only counts as paid if the cash received plus the points burned (at the shop's point value) covers the price, and the points part stays within the shop's cap (default 50%). The check is based on what the transaction actually did, so a customer can't game it.
 
+**Prices in pounds.** Shops price in GBP by default (EUR and USD too). PayPal charges in the shop's own currency. Wallet sales convert at the European Central Bank rate, and the exact token amount and rate are stored on each sale.
+
+**Staff tills.** The owner pairs a staff phone with a one-time code. Staff can take payments, but the server refuses anything that moves money or changes the shop.
+
+**End of day and accounts.** At closing time Tilltide writes the day's report, with an optional Claude note on top of facts computed without AI. The owner can export a month of sales, refunds and sweeps as CSV, via a one-time link.
+
 **Receipts.** After a sale the till shows a receipt QR. The customer's receipt page (`/r/<id>`) shows what they paid, the points they used and earned, and their points balance.
 
 **PayPal first.** The till opens on PayPal.
@@ -77,7 +83,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 32 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 35 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
@@ -128,7 +134,7 @@ Planned: a Pro plan (more agent questions, staff logins, exports), and PayPal pl
 - **Solana Foundation grant:** `agent-pay-kit` as a public good
 - **Solana Mobile grant:** the Seeker app with SKR loyalty
 - **Colosseum Eternal:** the startup version
-- **PayPal AI Hackathon:** PayPal checkout + PYUSD alongside the agent ([checklist](docs/paypal-hackathon.md))
+- **PayPal AI Hackathon:** PayPal-first till, partner onboarding, platform fees, agent-driven refunds ([checklist](docs/paypal-hackathon.md), [write-up](docs/submission/SUBMISSION.md), [demo script](docs/submission/DEMO-SCRIPT.md))
 
 ## Status
 
