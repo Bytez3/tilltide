@@ -19,17 +19,20 @@
    - closing time
    - owner wallet address
 3. **PayPal.** Settings → Connect PayPal → finish on PayPal → Check PayPal shows "Connected ✓".
-4. **Staff.** Settings → Staff devices → Add → pair each staff phone with the 8-digit code.
-5. **Test sale.** Charge £1.00 on PayPal, and you pay it. Then charge £1.00 on Wallet and pay from a test wallet. Check both show Paid ✓ and a receipt.
-6. **Test refund.** Refund the £1.00 PayPal sale from Activity and approve with the wallet.
-7. **Send takings.** Activity → Send takings to owner → confirm the fee line → sign.
-8. **End of day.** Activity → Write today's report → Export CSV, to show what the bookkeeper gets.
+4. **Menu.** Settings → Menu → add the shop's best sellers with prices (10–20 items is plenty). Anything else can still be typed on the keypad.
+5. **Staff.** Settings → Staff devices → Add → pair each staff phone with the 8-digit code.
+6. **Test sale.** Tap an item and charge it on PayPal, and you pay it. Then charge £1.00 on Wallet and pay from a test wallet. Then record a £1.00 Cash sale and a £1.00 Card sale (taken on their own reader). Check all four show in Activity.
+7. **Mistakes.** Void the test cash sale from Activity (owner only), so they know how.
+8. **Test refund.** Refund the £1.00 PayPal sale from Activity and approve with the wallet.
+9. **Send takings.** Activity → Send takings to owner → confirm the fee line → sign.
+10. **End of day.** Activity → Write today's report → Export CSV, to show what the bookkeeper gets.
 
 ## The first week
 
 - [ ] Daily: glance at the end-of-day report together (call or message).
 - [ ] Note every question or confusion. That's the product backlog.
-- [ ] Count: sales by PayPal and by wallet, points earned and spent, repeat customers, refunds, time saved on the books.
+- [ ] Encourage recording cash and card-reader sales too, so the report is the whole day.
+- [ ] Count: sales by PayPal, wallet, cash and card reader, points earned and spent, repeat customers, refunds, time saved on the books.
 
 ## Rules for in-shop signs
 
