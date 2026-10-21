@@ -13,6 +13,8 @@ export default function SettingsScreen() {
   const [rate, setRate] = useState('')
   const [owner, setOwner] = useState('')
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
+  const [pointValue, setPointValue] = useState('')
+  const [maxPercent, setMaxPercent] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [lookup, setLookup] = useState('')
@@ -23,6 +25,8 @@ export default function SettingsScreen() {
     setRate(String(merchant.pointsPerUnit))
     setOwner(merchant.ownerWallet ?? '')
     setToken(merchant.token)
+    setPointValue(merchant.pointValue)
+    setMaxPercent(String(merchant.redeemMaxPercent))
   }, [merchant])
 
   async function save() {
@@ -33,9 +37,12 @@ export default function SettingsScreen() {
       if (!rate.trim() || !Number.isFinite(pointsPerUnit) || pointsPerUnit < 0 || pointsPerUnit > 1000) {
         throw new Error('Points rate must be a number from 0 to 1000')
       }
+      const percent = Number(maxPercent)
+      if (!/^\d+(\.\d{1,6})?$/.test(pointValue.trim())) throw new Error('Point value must be a number like 0.01')
+      if (!Number.isInteger(percent) || percent < 0 || percent > 90) throw new Error('Points can cover 0 to 90% of a bill')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
-      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token })
+      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token, pointValue: pointValue.trim(), redeemMaxPercent: percent })
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -77,6 +84,11 @@ export default function SettingsScreen() {
 
           <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {token}</Text>
           <TextInput style={ui.input} keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
+
+          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({token})</Text>
+          <TextInput style={ui.input} keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
+          <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
+          <TextInput style={ui.input} keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Owner wallet (where sweeps go)</Text>
           <TextInput style={ui.input} autoCapitalize="none" autoCorrect={false} placeholder="Solana address" value={owner} onChangeText={setOwner} />

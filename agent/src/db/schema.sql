@@ -125,3 +125,12 @@ create index if not exists refunds_payment on refunds (payment_id);
 -- at once, and an attempt count so a 4xx is only trusted as "nothing moved" on the very first call.
 alter table refunds add column if not exists executing_until timestamptz;
 alter table refunds add column if not exists paypal_attempts integer not null default 0;
+
+-- Points redemption: what a point is worth (in 6-decimal units) and the most of a bill points can cover.
+alter table merchants add column if not exists point_value bigint not null default 10000;
+alter table merchants add column if not exists redeem_max_percent integer not null default 50;
+alter table merchants drop constraint if exists merchants_redeem_max_percent_check;
+alter table merchants add constraint merchants_redeem_max_percent_check check (redeem_max_percent between 0 and 90);
+alter table payments add column if not exists allow_points boolean not null default false;
+alter table payments add column if not exists points_redeemed bigint not null default 0;
+alter table payments add column if not exists discount bigint not null default 0;

@@ -1,6 +1,7 @@
 import { address, generateKeyPairSigner, type Address, type Signature } from '@solana/kit'
 import {
   calculatePoints,
+  encodeTransactionRequest,
   encodeTransferRequest,
   fromBaseUnits,
   getIssuePointsInstructions,
@@ -13,14 +14,16 @@ import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type Pa
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { merchantToken } from './merchants'
 
-export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string) {
+export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string, allowPoints = false) {
   // A fresh keypair's address is a guaranteed-unique reference; the private half is thrown away.
   const reference = (await generateKeyPairSigner()).address
   const token = merchantToken(merchant)
   const [payment] = await sql<PaymentRow[]>`
-    insert into payments (merchant_id, reference, amount, token_symbol, label)
-    values (${merchant.id}, ${reference}, ${amount.toString()}, ${token.symbol}, ${label ?? null})
+    insert into payments (merchant_id, reference, amount, token_symbol, label, allow_points)
+    values (${merchant.id}, ${reference}, ${amount.toString()}, ${token.symbol}, ${label ?? null}, ${allowPoints})
     returning *`
+  // With points on, the wallet fetches a transaction from us (Solana Pay transaction request) that also burns points.
+  if (allowPoints) return { payment: payment!, url: encodeTransactionRequest(`${config.publicUrl}/pay/${payment!.id}`) }
   const url = encodeTransferRequest({
     recipient: address(merchant.wallet),
     amount,
@@ -121,10 +124,14 @@ export async function getPayment(id: string): Promise<PaymentRow | null> {
 }
 
 /** Records a verified payment. Also accepts late payments that land after a request expired or failed. */
-export async function markPaymentPaid(payment: PaymentRow, result: Extract<VerifiedPayment, { ok: true }>) {
+export async function markPaymentPaid(
+  payment: PaymentRow,
+  result: Extract<VerifiedPayment, { ok: true }>,
+  redemption: { pointsRedeemed: bigint; discount: bigint } = { pointsRedeemed: 0n, discount: 0n },
+) {
   const rows = await sql`
     update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now(),
-      failure_reason = null
+      failure_reason = null, points_redeemed = ${redemption.pointsRedeemed.toString()}, discount = ${redemption.discount.toString()}
     where id = ${payment.id} and status in ('pending', 'expired', 'failed') returning id`
   return rows.length > 0
 }
@@ -190,7 +197,8 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   }
 
   const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
-  const points = calculatePoints(payment.amount, LEDGER_DECIMALS, {
+  // Points are earned on what the customer actually paid, not on the part they covered with points.
+  const points = calculatePoints(payment.amount - payment.discount, LEDGER_DECIMALS, {
     pointsPerUnit: Number(merchant!.pointsPerUnit),
     bonusMultiplier: Number(merchant!.bonusMultiplier),
   })
@@ -243,6 +251,9 @@ export function serializePayment(p: PaymentRow) {
     payer: p.payer,
     failureReason: p.failureReason,
     points: p.points?.toString() ?? null,
+    allowPoints: p.allowPoints,
+    pointsRedeemed: p.pointsRedeemed.toString(),
+    discount: p.discount.toString(),
     pointsIssued: p.pointsStatus === 'issued',
     createdAt: p.createdAt.toISOString(),
     paidAt: p.paidAt?.toISOString() ?? null,

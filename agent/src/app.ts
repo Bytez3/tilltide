@@ -10,6 +10,8 @@ import { secureHeaders } from 'hono/secure-headers'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
+import { buildRedeemTransaction, RedeemError } from './services/redeem'
+import { renderReceipt } from './receipt'
 import { clientIp, rateLimit, requireOrigin } from './rate-limit'
 import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
@@ -58,6 +60,8 @@ function serializeMerchant(m: MerchantRow) {
     cluster: config.cluster,
     pointsMint: config.pointsMint,
     paypalEnabled: Boolean(config.paypal),
+    pointValue: fromBaseUnits(m.pointValue, LEDGER_DECIMALS),
+    redeemMaxPercent: m.redeemMaxPercent,
   }
 }
 
@@ -135,6 +139,35 @@ app.get('/paypal/return', async (c) => {
 
 app.get('/paypal/cancel', (c) => c.html(page('Payment cancelled', 'No money was taken.')))
 
+// ---- Solana Pay transaction request (public: the customer's wallet calls these) -------------------
+app.get('/pay/:id', async (c) => {
+  const id = c.req.param('id')
+  const [row] = isUuid(id) ? await sql<{ name: string }[]>`
+    select m.name from payments p join merchants m on m.id = p.merchant_id where p.id = ${id}` : []
+  if (!row) throw new HTTPException(404, { message: 'Payment not found' })
+  return c.json({ label: row.name, icon: `${config.publicUrl}/favicon.png` })
+})
+
+app.post('/pay/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!isUuid(id)) throw new HTTPException(404, { message: 'Payment not found' })
+  const input = await body(c, z.object({ account: wallet }))
+  try {
+    return c.json(await buildRedeemTransaction(id, input.account))
+  } catch (err) {
+    if (err instanceof RedeemError) throw new HTTPException(400, { message: err.message })
+    throw err
+  }
+})
+
+/** Public customer receipt (the till shows it as a QR after a sale). */
+app.get('/r/:id', async (c) => {
+  const id = c.req.param('id')
+  const receipt = isUuid(id) ? await renderReceipt(id) : null
+  if (!receipt) return c.html(page('Receipt not found', 'Ask the shop to show the receipt again.'), 404)
+  return c.html(receipt)
+})
+
 // ---- Sign In With Solana -------------------------------------------------------------
 
 app.post('/auth/nonce', async (c) => c.json(await createNonce()))
@@ -204,6 +237,9 @@ shop.patch('/', async (c) => {
       ownerWallet: wallet.nullable().optional(),
       token: z.enum(['USDC', 'PYUSD']).optional(),
       pointsPerUnit: z.number().min(0).max(1000).optional(),
+      /** What one point is worth when spent, e.g. "0.01". */
+      pointValue: z.string().regex(/^\d+(\.\d{1,6})?$/).optional(),
+      redeemMaxPercent: z.number().int().min(0).max(90).optional(),
       timezone: timezone.optional(),
     }),
   )
@@ -216,6 +252,8 @@ shop.patch('/', async (c) => {
       owner_wallet = ${input.ownerWallet === undefined ? merchant.ownerWallet : input.ownerWallet},
       token_symbol = ${input.token ?? merchant.tokenSymbol},
       points_per_unit = ${input.pointsPerUnit ?? merchant.pointsPerUnit},
+      point_value = ${input.pointValue !== undefined ? toBaseUnits(input.pointValue, LEDGER_DECIMALS).toString() : merchant.pointValue.toString()},
+      redeem_max_percent = ${input.redeemMaxPercent ?? merchant.redeemMaxPercent},
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
@@ -233,8 +271,13 @@ shop.post('/payments', async (c) => {
       amount: z.string().max(20),
       label: z.string().max(80).optional(),
       rail: z.enum(['solana', 'paypal']).default('solana'),
+      /** Let the customer pay part of the bill with loyalty points. */
+      usePoints: z.boolean().default(false),
     }),
   )
+  if (input.usePoints && (input.rail !== 'solana' || !config.pointsMint)) {
+    throw new HTTPException(400, { message: 'Points can only be used on wallet payments, with points set up' })
+  }
   let amount: bigint
   try {
     // Every rail uses 6-decimal ledger units; PayPal additionally needs whole cents.
@@ -254,7 +297,7 @@ shop.post('/payments', async (c) => {
       throw new HTTPException(502, { message: `PayPal: ${(err as Error).message}` })
     }
   }
-  const { payment, url } = await createPayment(merchant, amount, input.label)
+  const { payment, url } = await createPayment(merchant, amount, input.label, input.usePoints)
   return c.json({ ...serializePayment(payment), url }, 201)
 })
 

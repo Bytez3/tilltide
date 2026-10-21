@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
 import { SetupCard } from '@/components/setup-card'
@@ -16,6 +16,7 @@ export default function ChargeScreen() {
   const { merchant, loading } = useMerchant()
   const [amount, setAmount] = useState('')
   const [rail, setRail] = useState<Rail>('solana')
+  const [usePoints, setUsePoints] = useState(false)
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +74,7 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
-      const created = await api.createPayment(amount.replace(/\.$/, ''), rail)
+      const created = await api.createPayment(amount.replace(/\.$/, ''), rail, rail === 'solana' && usePoints)
       current.current = created.id
       setPayment(created)
       watch(created)
@@ -118,6 +119,8 @@ export default function ChargeScreen() {
                 <Text style={ui.muted}>Sandbox: act as the customer</Text>
                 {payment.rail === 'paypal' ? (
                   <Button title="Customer approves in PayPal" variant="secondary" onPress={() => simulate(() => api.sandbox.approvePayPal(payment.url))} />
+                ) : payment.allowPoints ? (
+                  <Button title="Customer pays, using their points" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url))} />
                 ) : (
                   <>
                     <Button title="Customer pays in full" variant="secondary" onPress={() => simulate(() => api.sandbox.pay(payment.url))} />
@@ -141,6 +144,20 @@ export default function ChargeScreen() {
             <Text style={{ fontSize: 56, color: colors.paid }}>✓</Text>
             <Text style={[ui.h1, { color: colors.paid }]}>Paid</Text>
             {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
+            {payment.pointsRedeemed !== '0' && (
+              <Text style={ui.body}>
+                Used {payment.pointsRedeemed} points ({formatAmount(payment.discount, payment.decimals, payment.token)} off)
+              </Text>
+            )}
+            <View style={{ marginTop: 16, alignItems: 'center', gap: 6 }}>
+              <QRCode value={`${AppConfig.apiUrl}/r/${payment.id}`} size={120} />
+              <Text style={ui.muted}>Customer: scan for your receipt{payment.rail === 'solana' ? ' and points' : ''}</Text>
+              {AppConfig.sandbox && (
+                <Text style={{ color: colors.sea, fontWeight: '600' }} onPress={() => Linking.openURL(`${AppConfig.apiUrl}/r/${payment.id}`)}>
+                  Open receipt
+                </Text>
+              )}
+            </View>
             {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
               <Text style={ui.body}>
                 {payment.pointsIssued
@@ -193,6 +210,26 @@ export default function ChargeScreen() {
           </View>
         )}
       </View>
+      {rail === 'solana' && merchant.pointsMint && (
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityState={{ checked: usePoints }}
+          onPress={() => setUsePoints((v) => !v)}
+          style={[ui.row, { alignSelf: 'flex-start' }]}
+        >
+          <View
+            style={{
+              width: 22,
+              height: 22,
+              borderRadius: 6,
+              borderWidth: 2,
+              borderColor: colors.sea,
+              backgroundColor: usePoints ? colors.sea : 'transparent',
+            }}
+          />
+          <Text style={ui.body}>Let the customer use their points (up to {merchant.redeemMaxPercent}% off)</Text>
+        </Pressable>
+      )}
       <Text style={[ui.h1, { fontSize: 52, textAlign: 'center', marginVertical: 16 }]}>
         {amount || '0'} <Text style={{ fontSize: 22, color: colors.muted }}>{currency}</Text>
       </Text>

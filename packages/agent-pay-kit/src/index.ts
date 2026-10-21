@@ -1,5 +1,6 @@
 export * from './amount'
 export * from './loyalty'
+export * from './redeem'
 export * from './solana-pay'
 export * from './sweep'
 export * from './tokens'

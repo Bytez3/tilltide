@@ -593,6 +593,65 @@ async function main() {
       assert.deepEqual(r.body, { wallet: customer.address, points: '9', configured: true })
     })
 
+    await step('points redemption: wallet fetches the transaction, pays the rest and burns points; cheating is refused', async () => {
+      const { getTransactionDecoder, signTransaction, getBase64EncodedWireTransaction } = await import('@solana/kit')
+      const { getRedeemPaymentInstructions, TOKENS } = await import('@tilltide/agent-pay-kit')
+      await api('PATCH', '/shop', { token: 'USDC', pointValue: '0.10', redeemMaxPercent: 50 }, tillToken)
+      const pointsNow = async () => BigInt((await api('GET', `/points/${customer.address}`)).body.points)
+      assert.equal(await pointsNow(), 9n)
+
+      /** What a wallet does with a transaction request: GET label, POST account, sign what comes back, send. */
+      async function payWithWallet(url: string) {
+        const link = decodeURIComponent(url.slice('solana:'.length))
+        const meta = await (await fetch(link)).json()
+        assert.equal(meta.label, 'Pasty Shop')
+        const res = await (await fetch(link, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: customer.address }) })).json()
+        const tx = getTransactionDecoder().decode(Buffer.from(res.transaction, 'base64'))
+        const signed = await signTransaction([customer.keyPair], tx)
+        await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', preflightCommitment: 'confirmed' }).send()
+        return res.message as string
+      }
+
+      // Cheating: pay the discounted price but keep the points. Not paid.
+      const created = await api('POST', '/shop/payments', { amount: '2.00', usePoints: true }, tillToken)
+      assert.equal(created.status, 201, JSON.stringify(created.body))
+      assert.match(created.body.url, /^solana:http%3A%2F%2F/)
+      const reference = (await sql`select reference from payments where id = ${created.body.id}`)[0]!.reference
+      await send(customer, await getRedeemPaymentInstructions({
+        customer, recipient: till.address, token: TOKENS.devnet.USDC, toPay: 1_100_000n,
+        pointsMint: pointsMint.address, points: 0n, reference: address(reference), memo: 'cheat',
+      }))
+      const noted = await waitFor(tillToken, created.body.id, (p) => Boolean(p.failureReason), 'cheat noted')
+      assert.equal(noted.status, 'pending')
+      assert.match(noted.failureReason, /short of 2/)
+
+      // Honest: the wallet signs what the server built. 9 points × 0.10 = 0.90 off, pays 1.10.
+      const message = await payWithWallet(created.body.url)
+      assert.match(message, /using 9 points \(0.90 off\)\. You pay 1.10 USDC/)
+      const paid = await waitFor(tillToken, created.body.id, (p) => p.status === 'paid' && p.pointsIssued, 'redeemed and paid')
+      assert.equal(paid.pointsRedeemed, '9')
+      assert.equal(paid.discount, '900000')
+      assert.equal(paid.points, '1', 'points earned on the 1.10 actually paid')
+      assert.equal(await pointsNow(), 1n)
+
+      // Over the cap: burn points worth more than half the bill. Not paid.
+      await api('PATCH', '/shop', { pointValue: '5.00' }, tillToken)
+      const greedy = await api('POST', '/shop/payments', { amount: '2.00', usePoints: true }, tillToken)
+      const ref2 = (await sql`select reference from payments where id = ${greedy.body.id}`)[0]!.reference
+      await send(customer, await getRedeemPaymentInstructions({
+        customer, recipient: till.address, token: TOKENS.devnet.USDC, toPay: 10_000n,
+        pointsMint: pointsMint.address, points: 1n, reference: address(ref2), memo: 'greedy',
+      }))
+      const capped = await waitFor(tillToken, greedy.body.id, (p) => Boolean(p.failureReason), 'over cap noted')
+      assert.match(capped.failureReason, /more than the 50% allowed/)
+      await api('PATCH', '/shop', { pointValue: '0.01' }, tillToken)
+
+      const { body } = await api('GET', '/shop/summary', undefined, tillToken)
+      assert.equal(body.summary.pointsRedeemed, '9')
+      assert.equal(body.summary.pointsDiscount, '0.9')
+      assert.equal((await api('POST', '/shop/payments', { amount: '1', rail: 'paypal', usePoints: true }, tillToken)).status, 400)
+    })
+
     await step('PayPal: QR opens checkout → customer approves → return page captures → Paid ✓', async () => {
       const created = await api('POST', '/shop/payments', { amount: '7.25', label: 'Cream tea', rail: 'paypal' }, tillToken)
       assert.equal(created.status, 201, JSON.stringify(created.body))
@@ -648,7 +707,7 @@ async function main() {
 
     await step('summary splits takings by rail', async () => {
       const { body } = await api('GET', '/shop/summary', undefined, tillToken)
-      assert.deepEqual(body.summary.byRail, { solana: '9.75', paypal: '30.25' })
+      assert.deepEqual(body.summary.byRail, { solana: '10.85', paypal: '30.25' }, 'cash received; the points sale counts 1.10')
     })
 
     await step('PayPal refunds: agent proposes, owner approves with a wallet signature, PayPal refunds exactly once', async () => {
@@ -827,7 +886,7 @@ async function main() {
       assert.throws(() => tools.get_payments!.parse({ since: 'last tuesday' }))
 
       const { summary, reconciliation } = JSON.parse(await run('get_daily_summary', { reconcile: true }))
-      assert.equal(summary.takings, '40')
+      assert.equal(summary.takings, '41.1')
       assert.ok(reconciliation.tillBalance)
 
       assert.match(await run('issue_points', { payment_id: firstPaymentId }), /already issued/)

@@ -3,6 +3,8 @@ import { address } from '@solana/kit'
 import {
   calculatePoints,
   sweepFee,
+  planRedemption,
+  encodeTransactionRequest,
   encodeTransferRequest,
   fromBaseUnits,
   parseTransferRequest,
@@ -74,5 +76,25 @@ describe('sweep fee', () => {
     expect(sweepFee(100_000_000n, 0)).toBe(0n)
     expect(() => sweepFee(1n, -1)).toThrow()
     expect(() => sweepFee(1n, 1.5)).toThrow()
+  })
+})
+
+describe('points redemption', () => {
+  const rule = { pointValue: 100_000n, maxPercent: 50 } // 1 point = 0.10, up to half the bill
+
+  it('spends as many points as the cap allows, rounding down', () => {
+    expect(planRedemption(2_000_000n, 9n, rule)).toEqual({ points: 9n, discount: 900_000n, toPay: 1_100_000n })
+    expect(planRedemption(2_000_000n, 500n, rule)).toEqual({ points: 10n, discount: 1_000_000n, toPay: 1_000_000n })
+    expect(planRedemption(150_000n, 500n, rule)).toEqual({ points: 0n, discount: 0n, toPay: 150_000n })
+  })
+
+  it('does nothing without points or a point value', () => {
+    expect(planRedemption(2_000_000n, 0n, rule).points).toBe(0n)
+    expect(planRedemption(2_000_000n, 9n, { pointValue: 0n, maxPercent: 50 }).toPay).toBe(2_000_000n)
+  })
+
+  it('encodes a Solana Pay transaction request link', () => {
+    expect(encodeTransactionRequest('https://api.example/pay/abc?x=1')).toBe('solana:https%3A%2F%2Fapi.example%2Fpay%2Fabc%3Fx%3D1')
+    expect(() => encodeTransactionRequest('ftp://nope')).toThrow()
   })
 })

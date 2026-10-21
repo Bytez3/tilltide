@@ -24,13 +24,15 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
   const token = merchantToken(merchant)
   const payments = await getPaymentsForDay(merchant, date)
   const paid = payments.filter((p) => p.status === 'paid')
-  const total = paid.reduce((sum, p) => sum + p.amount, 0n)
+  // Cash actually received: on points sales, the part covered by points never reached the till.
+  const cash = (p: PaymentRow) => p.amount - p.discount
+  const total = paid.reduce((sum, p) => sum + cash(p), 0n)
 
   const byCustomer = new Map<string, { total: bigint; visits: number }>()
   for (const p of paid) {
     if (!p.payer) continue
     const c = byCustomer.get(p.payer) ?? { total: 0n, visits: 0 }
-    c.total += p.amount
+    c.total += cash(p)
     c.visits += 1
     byCustomer.set(p.payer, c)
   }
@@ -58,9 +60,11 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     averageSale: paid.length ? fromBaseUnits(total / BigInt(paid.length), token.decimals) : '0',
     uniqueCustomers: byCustomer.size,
     topCustomers,
+    pointsRedeemed: paid.reduce((sum, p) => sum + p.pointsRedeemed, 0n).toString(),
+    pointsDiscount: fromBaseUnits(paid.reduce((sum, p) => sum + p.discount, 0n), token.decimals),
     pointsIssued: paid.filter((p) => p.pointsStatus === 'issued').reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
     byRail: {
-      solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + p.amount, 0n), token.decimals),
+      solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + cash(p), 0n), token.decimals),
       paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
     },
     paymentsMissingPoints: paid.filter((p) => p.rail === 'solana' && p.pointsStatus !== 'issued' && p.pointsStatus !== 'none').map((p) => p.id),

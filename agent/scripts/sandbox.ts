@@ -15,7 +15,10 @@ import {
   address,
   createKeyPairSignerFromBytes,
   generateKeyPairSigner,
+  getBase64EncodedWireTransaction,
+  getTransactionDecoder,
   isAddress,
+  signTransaction,
   lamports,
   type Address,
   type Instruction,
@@ -148,6 +151,16 @@ app.post('/sandbox/airdrop', async (c) => {
 app.post('/sandbox/pay', async (c) => {
   const { url, amount } = await c.req.json<{ url: string; amount?: string }>()
   try {
+    // Transaction request (points sale): do what a wallet does — fetch the transaction, sign, send.
+    const link = decodeURIComponent(url.slice('solana:'.length))
+    if (/^https?:\/\//.test(link)) {
+      const res = await (await fetch(link, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: customer.address }) })).json()
+      if (!res.transaction) return c.json({ error: res.error ?? 'No transaction returned' }, 400)
+      const tx = getTransactionDecoder().decode(Buffer.from(res.transaction, 'base64'))
+      const signed = await signTransaction([customer.keyPair], tx)
+      await rpc.sendTransaction(getBase64EncodedWireTransaction(signed), { encoding: 'base64', preflightCommitment: 'confirmed' }).send()
+      return c.json({ ok: true, message: res.message })
+    }
     const req = parseTransferRequest(url)
     const mint = req.splToken!
     const program = mint === PYUSD ? TOKEN_2022 : TOKEN

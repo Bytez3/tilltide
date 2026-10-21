@@ -22,6 +22,10 @@ A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers 
 4. Points are minted to the payer at the shop's rate (default 1 point per 1 USDC). The mint authority key exists only in the server's env.
 5. The app's poll sees `paid` and shows "Paid ✓".
 
+**Spending points.** With "Let the customer use their points" switched on, the QR is a Solana Pay *transaction request*. The customer's wallet fetches a transaction from the API that pays the rest of the bill and burns the points, in one signature. The sale only counts as paid if the cash received plus the points burned (at the shop's point value) covers the price, and the points part stays within the shop's cap (default 50%). The check is based on what the transaction actually did, so a customer can't game it.
+
+**Receipts.** After a sale the till shows a receipt QR. The customer's receipt page (`/r/<id>`) shows what they paid, the points they used and earned, and their points balance.
+
 **PayPal rail.** For customers without a crypto wallet, the merchant flips Charge to *PayPal*. The API creates a PayPal order (Orders v2) and the QR opens PayPal's checkout, where the customer pays with PayPal or a card. The order is captured when PayPal sends them back, or by the watcher if they close the page, and the sale lands in the same ledger. PayPal takings settle to the shop's PayPal balance and don't earn points yet.
 
 **Sign-in.** The merchant signs in with the till wallet using Sign In With Solana over Mobile Wallet Adapter. The API checks the signature and a one-time nonce, then issues a session token. Every shop route lives under `/shop` and only ever sees the signed-in wallet's shop.
@@ -66,7 +70,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 29 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 30 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.

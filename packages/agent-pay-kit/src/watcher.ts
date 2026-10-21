@@ -42,6 +42,8 @@ export type VerifiedPayment =
       blockTime: bigint | null
       /** Text of any memo instructions in the transaction. */
       memos: string[]
+      /** How the payer's balance of every mint changed in this transaction (negative = spent or burned). */
+      payerDeltas: Record<string, bigint>
     }
   /** `retryable`: the RPC hasn't caught up yet; check again rather than treating it as a bad payment. */
   | { ok: false; signature: Signature; reason: string; retryable?: boolean; memos?: string[] }
@@ -95,7 +97,13 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
     }
   }
 
-  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime, memos }
+  const payerDeltas: Record<string, bigint> = {}
+  if (payer) {
+    const mints = new Set([...(pre ?? []), ...(post ?? [])].filter((b) => b.owner === payer).map((b) => b.mint))
+    for (const m of mints) payerDeltas[m] = balanceOf(post, payer, m) - balanceOf(pre, payer, m)
+  }
+
+  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime, memos, payerDeltas }
 }
 
 export type PaymentSearch =

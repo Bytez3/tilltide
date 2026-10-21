@@ -21,6 +21,10 @@ export interface MerchantRow {
   pointsPerUnit: string
   bonusMultiplier: string
   timezone: string
+  /** Value of one loyalty point in 6-decimal units (10000 = 0.01). */
+  pointValue: bigint
+  /** The most of a bill (percent) that points can pay for. */
+  redeemMaxPercent: number
   createdAt: Date
 }
 
@@ -48,6 +52,11 @@ export interface PaymentRow {
   paidAt: Date | null
   paypalOrderId: string | null
   paypalCaptureId: string | null
+  /** The customer may pay part of this bill with points (Solana Pay transaction request). */
+  allowPoints: boolean
+  pointsRedeemed: bigint
+  /** Part of `amount` covered by points. The till received amount - discount. */
+  discount: bigint
 }
 
 /** Ledger amounts use 6 decimals on every rail (USDC and PYUSD are 6; PayPal USD is scaled up). */

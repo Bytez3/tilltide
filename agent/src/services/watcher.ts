@@ -5,6 +5,7 @@ import { sql, type MerchantRow, type PaymentRow, type RefundRow } from '../db'
 import { rpc } from '../solana'
 import { checkPayPalPayment, getPayPal, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
 import { executeRefund } from './refunds'
+import { findRedeemPayment } from './redeem'
 
 /** Per payment: reference transactions already known not to be a valid payment (see findPayment). */
 const rejectedByPayment = new Map<string, Set<string>>()
@@ -17,6 +18,24 @@ export async function checkPayment(payment: PaymentRow, merchant: MerchantRow): 
 
   let rejected = rejectedByPayment.get(payment.id)
   if (!rejected) rejectedByPayment.set(payment.id, (rejected = new Set()))
+
+  if (payment.allowPoints) {
+    const found = await findRedeemPayment(payment, merchant, rejected)
+    if (found.status === 'mismatch') {
+      if (found.reason !== payment.failureReason) await notePaymentProblem(payment, found.reason)
+      return false
+    }
+    if (found.status !== 'paid') return false
+    rejectedByPayment.delete(payment.id)
+    if (!(await markPaymentPaid(payment, found.payment, { pointsRedeemed: found.pointsRedeemed, discount: found.discount }))) return false
+    void issuePointsForPayment(payment.id)
+      .then((points) => {
+        if (!points.issued) console.warn(`Points not issued for ${payment.id}: ${points.reason}`)
+      })
+      .catch((err) => console.error(`Points for ${payment.id} failed`, err))
+    return true
+  }
+
   const found = await findPayment(
     rpc,
     address(payment.reference),

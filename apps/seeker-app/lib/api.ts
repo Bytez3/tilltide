@@ -11,6 +11,9 @@ export interface Merchant {
   cluster: 'devnet' | 'mainnet'
   pointsMint: string | null
   paypalEnabled: boolean
+  /** What one point is worth when spent, e.g. "0.01". */
+  pointValue: string
+  redeemMaxPercent: number
 }
 
 export type Rail = 'solana' | 'paypal'
@@ -29,6 +32,9 @@ export interface Payment {
   failureReason: string | null
   points: string | null
   pointsIssued: boolean
+  allowPoints: boolean
+  pointsRedeemed: string
+  discount: string
   createdAt: string
   paidAt: string | null
   url?: string
@@ -130,11 +136,11 @@ export const api = {
 
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
-  updateShop: (patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token'>>) =>
+  updateShop: (patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent'>>) =>
     request<Merchant>('/shop', { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  createPayment: (amount: string, rail: Rail = 'solana', label?: string) =>
-    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, label })),
+  createPayment: (amount: string, rail: Rail = 'solana', usePoints = false, label?: string) =>
+    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, label })),
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
@@ -161,7 +167,7 @@ export const api = {
   sandbox: {
     info: () => request<{ customer: string; owner: string; customerBalances: { USDC: string; PYUSD: string } }>('/sandbox'),
     airdrop: (address: string) => request<{ ok: true }>('/sandbox/airdrop', post({ address })),
-    pay: (url: string, amount?: string) => request<{ ok: true; signature: string }>('/sandbox/pay', post({ url, amount })),
+    pay: (url: string, amount?: string) => request<{ ok: true; signature?: string; message?: string }>('/sandbox/pay', post({ url, amount })),
     approvePayPal: (url: string) => request<{ ok: true }>('/sandbox/paypal/approve', post({ url })),
   },
 
