@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
 import { GettingStarted } from '@/components/getting-started'
 import { SetupCard } from '@/components/setup-card'
-import { Button } from '@/components/ui'
+import { Button, Input } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Rail } from '@/lib/api'
@@ -227,9 +227,8 @@ export default function ChargeScreen() {
         )}
       </View>
       {activeRail === 'paypal' && (
-        <TextInput
-          style={ui.input}
-          placeholder="Loyalty code from the customer's receipt (optional)"
+        <Input
+          placeholder="Loyalty code (optional)"
           autoCapitalize="characters"
           autoCorrect={false}
           value={loyaltyCode}

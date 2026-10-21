@@ -1,14 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { FlatList, Linking, Pressable, RefreshControl, Text, TextInput, View } from 'react-native'
+import { FlatList, Linking, Pressable, RefreshControl, Text, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
-import { Button } from '@/components/ui'
+import { Button, Input } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Refund, Sweep } from '@/lib/api'
-import { currencySymbol, formatMoney, shortAddress } from '@/lib/format'
+import { currencySymbol, formatDay, formatMoney, shortAddress } from '@/lib/format'
 
 const STATUS_COLOUR: Record<Payment['status'], string> = {
   paid: colors.paid,
@@ -137,14 +137,16 @@ export default function ActivityScreen() {
             )}
             {s && Number(s.byRail.paypal) > 0 && (
               <Text style={ui.muted}>
-                Wallet {Number(s.byRail.solana).toFixed(2)} · PayPal {Number(s.byRail.paypal).toFixed(2)}
+                PayPal {currencySymbol(s.token)}
+                {Number(s.byRail.paypal).toFixed(2)} · Wallet {currencySymbol(s.token)}
+                {Number(s.byRail.solana).toFixed(2)}
               </Text>
             )}
             {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
             {sweepAmount !== null && (
               <View style={{ gap: 8 }}>
                 <Text style={ui.body}>Amount to move from the till ({merchant.token})</Text>
-                <TextInput style={ui.input} keyboardType="decimal-pad" value={sweepAmount} onChangeText={setSweepAmount} />
+                <Input keyboardType="decimal-pad" value={sweepAmount} onChangeText={setSweepAmount} />
                 <View style={ui.row}>
                   <Button title="Cancel" variant="secondary" onPress={() => setSweepAmount(null)} style={{ flex: 1 }} />
                   <Button title="Review" onPress={proposeSweep} disabled={!(Number(sweepAmount) > 0)} style={{ flex: 2 }} />
@@ -157,7 +159,7 @@ export default function ActivityScreen() {
               <Text style={ui.muted}>End of day{merchant.closeTime ? ` (written at ${merchant.closeTime})` : ''}</Text>
               {reports.data?.[0] ? (
                 <>
-                  <Text style={ui.muted}>{reports.data[0].date}</Text>
+                  <Text style={ui.muted}>{formatDay(reports.data[0].date)}</Text>
                   {reports.data[0].narrative && <Text style={ui.body}>{reports.data[0].narrative}</Text>}
                   <Text style={reports.data[0].narrative ? ui.muted : ui.body}>{reports.data[0].text}</Text>
                 </>
@@ -165,7 +167,7 @@ export default function ActivityScreen() {
                 <Text style={ui.muted}>No report yet today.</Text>
               )}
               <View style={ui.row}>
-                <Button title="Write today's report" variant="secondary" onPress={writeReport} loading={reportBusy} style={{ flex: 1 }} />
+                <Button title="Write report" variant="secondary" onPress={writeReport} loading={reportBusy} style={{ flex: 1 }} />
                 <Button title="Export CSV" variant="secondary" onPress={exportMonth} style={{ flex: 1 }} />
               </View>
             </View>
@@ -181,7 +183,7 @@ export default function ActivityScreen() {
           <View style={{ gap: 2, flexShrink: 1 }}>
             <Text style={ui.h2}>{formatMoney(item.amount, item.decimals, item.currency)}</Text>
             <Text style={ui.muted}>
-              {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              {new Date(item.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
               {item.rail === 'paypal' ? ' · PayPal' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}
               {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
             </Text>

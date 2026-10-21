@@ -5,7 +5,7 @@ import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { useSignSweep } from '@/features/sweep/use-sweep'
 import { api, Sweep } from '@/lib/api'
-import { shortAddress } from '@/lib/format'
+import { groupedAddress, shortAddress } from '@/lib/format'
 
 /** A proposed sweep: shown exactly as it will be signed, with sign / check / cancel. */
 export function SweepCard({
@@ -67,9 +67,14 @@ export function SweepCard({
           Tilltide fee {sweep.feeDisplay} {sweep.token} · {sweep.display} {sweep.token} leaves the till
         </Text>
       )}
-      <Text style={[ui.muted, { fontFamily: 'monospace' }]} selectable>
-        {sweep.toWallet}
-      </Text>
+      {sweep.status === 'proposed' && (
+        <View style={{ backgroundColor: colors.bg, borderRadius: 8, padding: 10, gap: 4 }}>
+          <Text style={ui.muted}>Check this matches your owner wallet:</Text>
+          <Text style={[ui.body, { fontFamily: 'monospace', letterSpacing: 0.5 }]} selectable>
+            {groupedAddress(sweep.toWallet)}
+          </Text>
+        </View>
+      )}
       {sweep.reason && <Text style={ui.muted}>{sweep.reason}</Text>}
       {sweep.error && <Text style={[ui.muted, { color: colors.warn }]}>{sweep.error}</Text>}
       {sweep.status === 'signing' && !signing ? (

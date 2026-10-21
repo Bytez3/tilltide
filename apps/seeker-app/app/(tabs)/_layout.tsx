@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons'
 import { Tabs } from 'expo-router'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 
@@ -13,10 +14,14 @@ const tab = (title: string, icon: IconName) => ({
 export default function TabsLayout() {
   // Staff devices take payments only: no agent (it can propose moving money).
   const { isStaff } = useMerchant()
+  const insets = useSafeAreaInsets()
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: colors.sea,
+        // The default bar squeezes the label box below its line height, which clips descenders (g, y).
+        tabBarStyle: { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom },
+        tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontWeight: '500' },
         headerStyle: { backgroundColor: colors.bg },
         headerShadowVisible: false,
         sceneStyle: { backgroundColor: colors.bg },

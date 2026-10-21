@@ -1,5 +1,10 @@
-import { ActivityIndicator, Pressable, StyleProp, Text, ViewStyle } from 'react-native'
-import { colors } from '@/constants/theme'
+import { ActivityIndicator, Pressable, StyleProp, Text, TextInput, TextInputProps, ViewStyle } from 'react-native'
+import { colors, ui } from '@/constants/theme'
+
+/** A text field with a clearly lighter placeholder, so hints never look like typed values. */
+export function Input({ style, ...props }: TextInputProps) {
+  return <TextInput placeholderTextColor={colors.placeholder} {...props} style={[ui.input, style]} />
+}
 
 export function Button({
   title,
@@ -29,6 +34,7 @@ export function Button({
           borderWidth: 1,
           borderRadius: 12,
           paddingVertical: 14,
+          paddingHorizontal: 12,
           alignItems: 'center',
           opacity: disabled ? 0.45 : pressed ? 0.85 : 1,
         },
@@ -38,7 +44,7 @@ export function Button({
       {loading ? (
         <ActivityIndicator color={primary ? colors.seaInk : colors.sea} />
       ) : (
-        <Text style={{ color: primary ? colors.seaInk : colors.ink, fontSize: 16, fontWeight: '600' }}>{title}</Text>
+        <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: primary ? colors.seaInk : colors.ink, fontSize: 16, fontWeight: '600' }}>{title}</Text>
       )}
     </Pressable>
   )

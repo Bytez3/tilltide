@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Text, TextInput, View } from 'react-native'
-import { Button } from '@/components/ui'
+import { Text, View } from 'react-native'
+import { Button, Input } from '@/components/ui'
 import { ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { useWallet } from '@/features/wallet/wallet'
@@ -38,7 +38,7 @@ export function SetupCard() {
       <View style={ui.card}>
         <Text style={ui.h2}>Pair a staff till</Text>
         <Text style={ui.muted}>Ask the owner for a pairing code (Settings → Staff devices). Staff can take payments but can&apos;t move money.</Text>
-        <TextInput style={ui.input} placeholder="1234-5678" keyboardType="number-pad" value={code} onChangeText={setCode} maxLength={9} />
+        <Input placeholder="1234-5678" keyboardType="number-pad" value={code} onChangeText={setCode} maxLength={9} />
         <Button title="Pair this device" onPress={submit} disabled={code.replace(/\D/g, '').length !== 8} loading={busy} />
         {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}
         <Text style={[ui.muted, { textAlign: 'center', marginTop: 4 }]} onPress={() => (setStaffMode(false), setError(null))}>
@@ -59,7 +59,7 @@ export function SetupCard() {
           Browser sandbox: signing uses a local test wallet on a local test chain. No real money.
         </Text>
       )}
-      <TextInput style={ui.input} placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
+      <Input placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
       <Button title="Sign in with wallet" onPress={submit} loading={busy} />
       {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}
       <Text style={[ui.muted, { textAlign: 'center', marginTop: 4 }]} onPress={() => (setStaffMode(true), setError(null))}>

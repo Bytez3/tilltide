@@ -1,18 +1,19 @@
 import { isAddress } from '@solana/kit'
 import { useEffect, useState } from 'react'
-import { Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
-import { Button } from '@/components/ui'
+import { Button, Input } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api } from '@/lib/api'
 import { AppConfig } from '@/constants/app-config'
-import { shortAddress } from '@/lib/format'
+import { currencySymbol, shortAddress } from '@/lib/format'
 
 export default function SettingsScreen() {
   const { merchant, update, signOut, replace, isStaff } = useMerchant()
   const [staffLabel, setStaffLabel] = useState('')
   const [staffCode, setStaffCode] = useState<string | null>(null)
+  const [staffMinutes, setStaffMinutes] = useState(15)
   const [staffList, setStaffList] = useState<{ id: string; label: string; since: string }[]>([])
   const [staffMessage, setStaffMessage] = useState<string | null>(null)
   const [paypalEmail, setPaypalEmail] = useState('')
@@ -129,7 +130,8 @@ export default function SettingsScreen() {
     setStaffMessage(null)
     try {
       const invite = await api.createStaffInvite(staffLabel.trim() || 'Staff till')
-      setStaffCode(`${invite.code} (valid for ${invite.expiresInMinutes} minutes, once)`)
+      setStaffCode(invite.code)
+      setStaffMinutes(invite.expiresInMinutes)
       setStaffLabel('')
     } catch (e) {
       setStaffMessage(e instanceof Error ? e.message : String(e))
@@ -196,13 +198,13 @@ export default function SettingsScreen() {
             ))}
           </View>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {currency}</Text>
-          <TextInput style={ui.input} keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
+          <Text style={[ui.body, { marginTop: 8 }]}>Points per {currencySymbol(currency)}1 spent</Text>
+          <Input keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
 
-          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({currency})</Text>
-          <TextInput style={ui.input} keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
+          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({currencySymbol(currency)})</Text>
+          <Input keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
           <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
-          <TextInput style={ui.input} keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
+          <Input keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Seeker owners earn</Text>
           <View style={ui.row}>
@@ -221,10 +223,10 @@ export default function SettingsScreen() {
           <Text style={ui.muted}>Extra points for customers paying from a Solana Seeker phone (Seeker Genesis Token or SKR).</Text>
 
           <Text style={[ui.body, { marginTop: 8 }]}>Closing time (end-of-day report)</Text>
-          <TextInput style={ui.input} value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />
+          <Input value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Owner wallet (where sweeps go)</Text>
-          <TextInput style={ui.input} autoCapitalize="none" autoCorrect={false} placeholder="Solana address" value={owner} onChangeText={setOwner} />
+          <Input autoCapitalize="none" autoCorrect={false} placeholder="Solana address" value={owner} onChangeText={setOwner} />
 
           <Button title="Save" onPress={save} loading={saving} />
           {message && <Text style={ui.muted}>{message}</Text>}
@@ -245,12 +247,16 @@ export default function SettingsScreen() {
               </Text>
             </View>
           ))}
-          <TextInput style={ui.input} placeholder="Name, e.g. Saturday till" value={staffLabel} onChangeText={setStaffLabel} maxLength={40} />
+          <Input placeholder="Name, e.g. Saturday till" value={staffLabel} onChangeText={setStaffLabel} maxLength={40} />
           <Button title="Add staff device" variant="secondary" onPress={addStaff} />
           {staffCode && (
-            <Text style={[ui.h2, { color: colors.sea }]} selectable>
-              Pairing code: {staffCode}
-            </Text>
+            <View style={{ backgroundColor: colors.bg, borderRadius: 10, padding: 12, alignItems: 'center', gap: 4 }}>
+              <Text style={ui.muted}>Pairing code</Text>
+              <Text style={[ui.h1, { color: colors.sea, letterSpacing: 2 }]} selectable>
+                {staffCode}
+              </Text>
+              <Text style={ui.muted}>Enter it on the staff phone. Works once, for {staffMinutes} minutes.</Text>
+            </View>
           )}
           {staffMessage && <Text style={ui.muted}>{staffMessage}</Text>}
         </View>
@@ -260,7 +266,10 @@ export default function SettingsScreen() {
         <View style={ui.card}>
           <Text style={ui.h2}>PayPal</Text>
           {merchant.paypal.status === 'connected' ? (
-            <Text style={[ui.body, { color: colors.paid, fontWeight: '600' }]}>Connected ✓ PayPal sales go to your PayPal account.</Text>
+            <>
+              <Text style={{ color: colors.paid, fontWeight: '700', fontSize: 15 }}>Connected ✓</Text>
+              <Text style={ui.muted}>PayPal sales go straight to your PayPal account.</Text>
+            </>
           ) : (
             <Text style={ui.muted}>
               Connect your PayPal so PayPal and card payments go straight to your account.
@@ -279,7 +288,7 @@ export default function SettingsScreen() {
           {!merchant.paypal.onboardingAvailable && (
             <>
               <Text style={ui.body}>PayPal email to be paid to</Text>
-              <TextInput style={ui.input} autoCapitalize="none" keyboardType="email-address" value={paypalEmail} onChangeText={setPaypalEmail} />
+              <Input autoCapitalize="none" keyboardType="email-address" value={paypalEmail} onChangeText={setPaypalEmail} />
               <Button title="Save PayPal email" variant="secondary" onPress={savePaypalEmail} />
             </>
           )}
@@ -290,7 +299,7 @@ export default function SettingsScreen() {
       <View style={ui.card}>
         <Text style={ui.h2}>Customer points</Text>
         <Text style={ui.muted}>Look up the points balance for any customer wallet.</Text>
-        <TextInput style={ui.input} autoCapitalize="none" autoCorrect={false} placeholder="Customer wallet address" value={lookup} onChangeText={setLookup} />
+        <Input autoCapitalize="none" autoCorrect={false} placeholder="Customer wallet address" value={lookup} onChangeText={setLookup} />
         <Button title="Check balance" variant="secondary" onPress={checkPoints} disabled={!lookup.trim()} />
         {points && <Text style={[ui.h2, { color: colors.sea }]}>{points}</Text>}
       </View>

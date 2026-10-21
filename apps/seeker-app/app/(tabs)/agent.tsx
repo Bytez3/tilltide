@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
-import { Button } from '@/components/ui'
+import { Button, Input } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, ChatTurn, Refund, Sweep } from '@/lib/api'
@@ -92,8 +92,8 @@ export default function AgentScreen() {
         {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
       </ScrollView>
       <View style={[ui.row, { padding: 12, borderTopColor: colors.line, borderTopWidth: 1 }]}>
-        <TextInput
-          style={[ui.input, { flex: 1 }]}
+        <Input
+          style={{ flex: 1 }}
           placeholder="Ask the agent…"
           value={draft}
           onChangeText={setDraft}

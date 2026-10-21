@@ -5,6 +5,7 @@ export const colors = {
   card: '#FFFFFF',
   ink: '#14211F',
   muted: '#5E6B68',
+  placeholder: '#98A29F',
   line: '#E2DDD4',
   sea: '#0E6E6B',
   seaInk: '#FFFFFF',

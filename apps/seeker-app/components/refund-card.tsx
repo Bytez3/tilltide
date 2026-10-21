@@ -4,6 +4,7 @@ import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useApproveRefund } from '@/features/refund/use-approve-refund'
 import { api, Refund } from '@/lib/api'
+import { currencySymbol } from '@/lib/format'
 
 /** A proposed PayPal refund: approve with the till wallet, or cancel. Follows PENDING refunds to the end. */
 export function RefundCard({
@@ -56,7 +57,7 @@ export function RefundCard({
     <View style={[ui.card, { borderColor: colors.sea, borderWidth: 1 }]}>
       <Text style={ui.muted}>PayPal refund</Text>
       <Text style={ui.h1}>
-        {refund.display} {refund.currency}
+        {currencySymbol(refund.currency)}{refund.display}
       </Text>
       {refund.reason && <Text style={ui.muted}>{refund.reason}</Text>}
       {refund.error && <Text style={[ui.muted, { color: colors.warn }]}>{refund.error}</Text>}
