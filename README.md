@@ -77,6 +77,10 @@ On Railway, `railway.json` at the repo root builds the API from `agent/Dockerfil
 docker build -f agent/Dockerfile -t tilltide-agent .
 ```
 
+## Live
+
+API (devnet): https://api-production-83900.up.railway.app. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
+
 ## Rules
 
 - Devnet until M4.
