@@ -6,7 +6,7 @@ import { SetupCard } from '@/components/setup-card'
 import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
-import { api, Payment } from '@/lib/api'
+import { api, Payment, Rail } from '@/lib/api'
 import { formatAmount } from '@/lib/format'
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
@@ -14,6 +14,7 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 export default function ChargeScreen() {
   const { merchant, loading } = useMerchant()
   const [amount, setAmount] = useState('')
+  const [rail, setRail] = useState<Rail>('solana')
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,7 +47,7 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
-      const created = await api.createPayment(merchant.id, amount)
+      const created = await api.createPayment(merchant.id, amount, rail)
       setPayment(created)
       poll.current = setInterval(async () => {
         const latest = await api.getPayment(created.id).catch(() => null)
@@ -80,7 +81,11 @@ export default function ChargeScreen() {
             </View>
             <View style={ui.row}>
               <ActivityIndicator color={colors.sea} />
-              <Text style={ui.muted}>Waiting for payment. Scan with any Solana wallet.</Text>
+              <Text style={ui.muted}>
+                {payment.rail === 'paypal'
+                  ? 'Waiting for payment. Scan with the phone camera to pay with PayPal or card.'
+                  : 'Waiting for payment. Scan with any Solana wallet.'}
+              </Text>
             </View>
           </>
         )}
@@ -88,6 +93,7 @@ export default function ChargeScreen() {
           <View style={[ui.card, { alignItems: 'center', alignSelf: 'stretch', paddingVertical: 32 }]}>
             <Text style={{ fontSize: 56, color: colors.paid }}>✓</Text>
             <Text style={[ui.h1, { color: colors.paid }]}>Paid</Text>
+            {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
             {payment.points && payment.points !== '0' && (
               <Text style={ui.body}>
                 {payment.points} points {payment.pointsIssued ? 'sent to' : 'going to'} the customer
@@ -114,11 +120,31 @@ export default function ChargeScreen() {
   }
 
   const valid = Number(amount) > 0
+  const currency = rail === 'paypal' ? 'USD' : merchant.token
   return (
     <View style={[ui.screen, ui.content]}>
-      <Text style={ui.muted}>{merchant.name}</Text>
+      <View style={[ui.row, { justifyContent: 'space-between' }]}>
+        <Text style={ui.muted}>{merchant.name}</Text>
+        {merchant.paypalEnabled && (
+          <View style={[ui.row, { gap: 0, borderRadius: 10, borderWidth: 1, borderColor: colors.line, overflow: 'hidden' }]}>
+            {(['solana', 'paypal'] as const).map((r) => (
+              <Pressable
+                key={r}
+                onPress={() => setRail(r)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: rail === r }}
+                style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: rail === r ? colors.sea : colors.card }}
+              >
+                <Text style={{ color: rail === r ? colors.seaInk : colors.ink, fontWeight: '600' }}>
+                  {r === 'solana' ? 'Wallet' : 'PayPal'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+      </View>
       <Text style={[ui.h1, { fontSize: 52, textAlign: 'center', marginVertical: 16 }]}>
-        {amount || '0'} <Text style={{ fontSize: 22, color: colors.muted }}>{merchant.token}</Text>
+        {amount || '0'} <Text style={{ fontSize: 22, color: colors.muted }}>{currency}</Text>
       </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
         {KEYS.map((key) => (
@@ -136,7 +162,7 @@ export default function ChargeScreen() {
         ))}
       </View>
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
-      <Button title={valid ? `Charge ${amount} ${merchant.token}` : 'Enter an amount'} onPress={charge} disabled={!valid} loading={creating} />
+      <Button title={valid ? `Charge ${amount} ${currency}` : 'Enter an amount'} onPress={charge} disabled={!valid} loading={creating} />
     </View>
   )
 }

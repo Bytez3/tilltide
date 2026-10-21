@@ -8,9 +8,9 @@ import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
 import { config } from './config'
-import { sql, type MerchantRow, type PaymentRow, type SweepRow } from './db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from './db'
 import { getMerchant, merchantToken } from './services/merchants'
-import { createPayment, getPayment, serializePayment } from './services/payments'
+import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
 import { confirmSweep, serializeSweep } from './services/sweeps'
 import { checkPayment } from './services/watcher'
@@ -42,6 +42,7 @@ function serializeMerchant(m: MerchantRow) {
     timezone: m.timezone,
     cluster: config.cluster,
     pointsMint: config.pointsMint,
+    paypalEnabled: Boolean(config.paypal),
   }
 }
 
@@ -68,6 +69,25 @@ app.get('/points/:wallet', async (c) => {
     .catch(() => '0')
   return c.json({ wallet: owner, points, configured: true })
 })
+
+const page = (title: string, text: string) =>
+  `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+<body style="font-family:system-ui;background:#F6F3EE;color:#14211F;display:grid;place-items:center;min-height:90vh;text-align:center;padding:16px">
+<div><h1 style="margin:0 0 8px">${title}</h1><p style="color:#5E6B68">${text}</p></div></body>`
+
+/** PayPal sends the customer here after they approve. Capture straight away so the till flips to Paid. */
+app.get('/paypal/return', async (c) => {
+  const orderId = c.req.query('token')
+  const [payment] = orderId ? await sql<PaymentRow[]>`select * from payments where paypal_order_id = ${orderId}` : []
+  if (!payment) return c.html(page('Payment not found', 'Show this screen to the shop.'), 404)
+  await checkPayPalPayment(payment).catch((err) => console.error('PayPal capture on return failed', err))
+  const latest = (await getPayment(payment.id))!
+  return latest.status === 'paid'
+    ? c.html(page('Paid ✓', 'Thanks! You can close this page.'))
+    : c.html(page('Almost there', 'Your payment is processing. The shop will see it in a moment.'))
+})
+
+app.get('/paypal/cancel', (c) => c.html(page('Payment cancelled', 'No money was taken.')))
 
 const requireAppKey = createMiddleware(async (c, next) => {
   if (config.appApiKey && c.req.header('x-api-key') !== config.appApiKey) {
@@ -117,17 +137,38 @@ app.patch('/merchants/:id', async (c) => {
   return c.json(serializeMerchant(row!))
 })
 
-/** Merchant enters an amount; returns the Solana Pay URL to show as a QR. */
+/**
+ * Merchant enters an amount; returns the URL to show as a QR.
+ * `solana`: a Solana Pay transfer request. `paypal`: PayPal's checkout page, for customers without a wallet.
+ */
 app.post('/merchants/:id/payments', async (c) => {
   const merchant = await merchantOr404(c.req.param('id'))
-  const input = await body(c, z.object({ amount: z.string(), label: z.string().max(80).optional() }))
+  const input = await body(
+    c,
+    z.object({
+      amount: z.string(),
+      label: z.string().max(80).optional(),
+      rail: z.enum(['solana', 'paypal']).default('solana'),
+    }),
+  )
   let amount: bigint
   try {
-    amount = toBaseUnits(input.amount, merchantToken(merchant).decimals)
+    // Every rail uses 6-decimal ledger units; PayPal additionally needs whole cents.
+    amount = toBaseUnits(input.amount, input.rail === 'paypal' ? 2 : merchantToken(merchant).decimals)
+    if (input.rail === 'paypal') amount *= 10n ** BigInt(LEDGER_DECIMALS - 2)
   } catch (err) {
     throw new HTTPException(400, { message: (err as Error).message })
   }
   if (amount <= 0n) throw new HTTPException(400, { message: 'Amount must be more than zero' })
+  if (input.rail === 'paypal') {
+    if (!config.paypal) throw new HTTPException(400, { message: 'PayPal is not set up on the server' })
+    try {
+      const { payment, url } = await createPayPalPayment(merchant, amount, input.label)
+      return c.json({ ...serializePayment(payment), url }, 201)
+    } catch (err) {
+      throw new HTTPException(502, { message: `PayPal: ${(err as Error).message}` })
+    }
+  }
   const { payment, url } = await createPayment(merchant, amount, input.label)
   return c.json({ ...serializePayment(payment), url }, 201)
 })

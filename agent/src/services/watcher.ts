@@ -3,11 +3,13 @@ import { findSignatureByReference, verifyPayment } from '@tilltide/agent-pay-kit
 import { config } from '../config'
 import { sql, type MerchantRow, type PaymentRow } from '../db'
 import { rpc } from '../solana'
-import { issuePointsForPayment, markPaymentResult } from './payments'
+import { checkPayPalPayment, issuePointsForPayment, markPaymentResult } from './payments'
 
 /** Checks one pending payment against the chain. Returns true if its status changed. */
 export async function checkPayment(payment: PaymentRow, merchant: MerchantRow): Promise<boolean> {
   if (payment.status !== 'pending') return false
+  if (payment.rail === 'paypal') return checkPayPalPayment(payment)
+  if (!payment.reference || payment.tokenSymbol === 'USD') return false
   const signature = await findSignatureByReference(rpc, address(payment.reference))
   if (!signature) return false
 

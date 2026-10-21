@@ -44,3 +44,10 @@ create table if not exists sweeps (
   signature text unique,
   created_at timestamptz not null default now()
 );
+
+-- PayPal rail (M3). Amounts stay in 6-decimal base units so PayPal USD sums with USDC/PYUSD.
+alter table payments add column if not exists paypal_order_id text unique;
+alter table payments add column if not exists paypal_capture_id text;
+alter table payments drop constraint if exists payments_rail_check;
+alter table payments add constraint payments_rail_check check (rail in ('solana', 'paypal'));
+alter table payments alter column reference drop not null;

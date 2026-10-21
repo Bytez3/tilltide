@@ -61,6 +61,11 @@ export default function ActivityScreen() {
               {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
             </Text>
           )}
+          {s && Number(s.byRail.paypal) > 0 && (
+            <Text style={ui.muted}>
+              Wallet {Number(s.byRail.solana).toFixed(2)} · PayPal {Number(s.byRail.paypal).toFixed(2)}
+            </Text>
+          )}
         </View>
       }
       ListEmptyComponent={<Text style={ui.muted}>No sales yet. Take one from the Charge tab.</Text>}
@@ -70,7 +75,7 @@ export default function ActivityScreen() {
             <Text style={ui.h2}>{formatAmount(item.amount, item.decimals, item.token)}</Text>
             <Text style={ui.muted}>
               {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              {item.payer ? ` · ${shortAddress(item.payer)}` : ''}
+              {item.rail === 'paypal' ? ' · PayPal' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}
               {item.points && item.points !== '0' ? ` · ${item.points} pts` : ''}
             </Text>
           </View>

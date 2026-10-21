@@ -4,14 +4,14 @@ A mobile-first AI payments agent for small businesses on Solana.
 
 *Till* — the shop counter. *Tide* — payments flowing in and out on their own, from the Cornish coast to anywhere.
 
-A shop takes USDC on a Solana Seeker (or any Android phone). Customers pay from any Solana wallet and earn onchain loyalty points. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
+A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers pay from any Solana wallet and earn onchain loyalty points, or pay with PayPal if they don't have a wallet. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
 
 ## Repo
 
 | Path | What |
 | --- | --- |
 | [`apps/seeker-app`](apps/seeker-app) | Expo / React Native merchant app. Charge (amount → Solana Pay QR → "Paid ✓"), Activity, Agent chat, Settings |
-| [`agent`](agent) | Node/TS API (Hono + Postgres): payment requests, chain watcher, points issuing, Claude agent |
+| [`agent`](agent) | Node/TS API (Hono + Postgres): payment requests, chain watcher, PayPal checkout, points issuing, Claude agent |
 | [`packages/agent-pay-kit`](packages/agent-pay-kit) | MIT kit: Solana Pay requests, payment verification, loyalty points, sweeps |
 
 ## How a sale works
@@ -21,6 +21,8 @@ A shop takes USDC on a Solana Seeker (or any Android phone). Customers pay from 
 3. The watcher polls `getSignaturesForAddress(reference)`, then checks the merchant's token balance went up by at least the amount. The payment is marked paid and the payer recorded.
 4. Points are minted to the payer at the shop's rate (default 1 point per 1 USDC). The mint authority key exists only in the server's env.
 5. The app's poll sees `paid` and shows "Paid ✓".
+
+**PayPal rail.** For customers without a crypto wallet, the merchant flips Charge to *PayPal*. The API creates a PayPal order (Orders v2) and the QR opens PayPal's checkout, where the customer pays with PayPal or a card. The order is captured when PayPal sends them back, or by the watcher if they close the page, and the sale lands in the same ledger. PayPal takings settle to the shop's PayPal balance and don't earn points yet.
 
 The agent (Claude, with tool use) has four tools: `get_payments`, `get_daily_summary` (with optional chain reconciliation), `issue_points` (retry only), and `sweep_to_owner`. A sweep is only ever a **proposal**: the app shows a confirm card, the merchant signs with Mobile Wallet Adapter, and the backend verifies the transfer onchain before marking it done.
 
@@ -35,7 +37,7 @@ pnpm install
 docker run -d --name tilltide-db -e POSTGRES_USER=tilltide -e POSTGRES_PASSWORD=tilltide -e POSTGRES_DB=tilltide -p 5432:5432 postgres:17
 
 # API
-cp agent/.env.example agent/.env      # add ANTHROPIC_API_KEY
+cp agent/.env.example agent/.env      # add ANTHROPIC_API_KEY, and PayPal sandbox keys for the PayPal rail
 pnpm --filter @tilltide/agent migrate
 pnpm --filter @tilltide/agent create-points-mint   # paste the printed POINTS_* lines into agent/.env
 pnpm agent
@@ -48,7 +50,7 @@ pnpm --filter @tilltide/seeker-app android
 Get devnet USDC for a test customer wallet from [faucet.circle.com](https://faucet.circle.com) and devnet SOL from [faucet.solana.com](https://faucet.solana.com).
 
 ```bash
-pnpm test        # kit unit tests
+pnpm test        # kit and PayPal client unit tests
 pnpm typecheck   # kit, agent and app
 ```
 
@@ -77,8 +79,8 @@ pnpm typecheck   # kit, agent and app
 - **Solana Foundation grant:** `agent-pay-kit` as a public good
 - **Solana Mobile grant:** the Seeker app with SKR loyalty
 - **Colosseum Eternal:** the startup version
-- **PayPal AI Hackathon:** the agent, with PayPal integration (see below)
+- **PayPal AI Hackathon:** PayPal checkout + PYUSD alongside the agent ([checklist](docs/paypal-hackathon.md))
 
 ## Status
 
-Built so far: M1–M3 code paths end to end. Verified against devnet: payment request creation, reference lookup, payment verification on real USDC transfers, reconciliation reads, sweep proposals. Not yet run: a device build with a live wallet, points minting (the setup script needs devnet SOL), and the agent against the live Claude API (needs `ANTHROPIC_API_KEY`).
+Built so far: M1–M3 code paths end to end, plus the PayPal rail. Verified: payment requests, reference lookup and payment verification on real devnet USDC transfers, reconciliation reads, sweep proposals, and the full PayPal create → approve → capture → paid flow against a local mock of the Orders API. Not yet run: a device build with a live wallet, points minting (the setup script needs devnet SOL), the agent against the live Claude API (needs `ANTHROPIC_API_KEY`), and PayPal's real sandbox (needs sandbox keys).

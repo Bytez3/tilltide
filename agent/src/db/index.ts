@@ -25,10 +25,13 @@ export interface MerchantRow {
 export interface PaymentRow {
   id: string
   merchantId: string
-  rail: 'solana'
-  reference: string
+  rail: 'solana' | 'paypal'
+  /** Solana Pay reference key. Null for PayPal payments. */
+  reference: string | null
+  /** 6-decimal base units on every rail. */
   amount: bigint
-  tokenSymbol: 'USDC' | 'PYUSD'
+  /** 'USD' for PayPal payments. */
+  tokenSymbol: 'USDC' | 'PYUSD' | 'USD'
   label: string | null
   status: PaymentStatus
   signature: string | null
@@ -38,7 +41,12 @@ export interface PaymentRow {
   pointsSignature: string | null
   createdAt: Date
   paidAt: Date | null
+  paypalOrderId: string | null
+  paypalCaptureId: string | null
 }
+
+/** Ledger amounts use 6 decimals on every rail (USDC and PYUSD are 6; PayPal USD is scaled up). */
+export const LEDGER_DECIMALS = 6
 
 export interface SweepRow {
   id: string

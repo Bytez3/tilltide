@@ -19,6 +19,19 @@ export const config = {
   pointsMint: process.env.POINTS_MINT ? (address(process.env.POINTS_MINT) as Address) : null,
   pointsAuthoritySecret: process.env.POINTS_AUTHORITY_SECRET ?? null,
   appApiKey: process.env.APP_API_KEY ?? null,
+  /** Public base URL of this API, for PayPal return links. */
+  publicUrl: process.env.PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
+  paypal:
+    process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET
+      ? {
+          clientId: process.env.PAYPAL_CLIENT_ID,
+          clientSecret: process.env.PAYPAL_CLIENT_SECRET,
+          env: (process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox') as 'sandbox' | 'live',
+          apiBase: process.env.PAYPAL_API_BASE,
+        }
+      : null,
+  /** Currency PayPal orders are taken in. USD keeps the ledger 1:1 with USDC/PYUSD. */
+  paypalCurrency: process.env.PAYPAL_CURRENCY ?? 'USD',
   /** Unpaid requests stop being watched after this long. */
   paymentTtlMs: 30 * 60 * 1000,
   watchIntervalMs: 3000,

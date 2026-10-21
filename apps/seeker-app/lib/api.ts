@@ -11,11 +11,15 @@ export interface Merchant {
   timezone: string
   cluster: 'devnet' | 'mainnet'
   pointsMint: string | null
+  paypalEnabled: boolean
 }
+
+export type Rail = 'solana' | 'paypal'
 
 export interface Payment {
   id: string
-  reference: string
+  rail: Rail
+  reference: string | null
   amount: string
   decimals: number
   token: string
@@ -53,6 +57,7 @@ export interface DailySummary {
   topCustomers: { wallet: string; total: string; visits: number }[]
   pointsIssued: string
   stillPending: number
+  byRail: { solana: string; paypal: string }
 }
 
 export interface ChatTurn {
@@ -79,8 +84,8 @@ export const api = {
   getMerchant: (id: string) => request<Merchant>(`/merchants/${id}`),
   updateMerchant: (id: string, patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token'>>) =>
     request<Merchant>(`/merchants/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
-  createPayment: (merchantId: string, amount: string, label?: string) =>
-    request<Payment & { url: string }>(`/merchants/${merchantId}/payments`, json({ amount, label })),
+  createPayment: (merchantId: string, amount: string, rail: Rail = 'solana', label?: string) =>
+    request<Payment & { url: string }>(`/merchants/${merchantId}/payments`, json({ amount, rail, label })),
   getPayment: (id: string) => request<Payment>(`/payments/${id}`),
   listPayments: (merchantId: string) => request<Payment[]>(`/merchants/${merchantId}/payments`),
   getSummary: (merchantId: string) => request<{ summary: DailySummary }>(`/merchants/${merchantId}/summary`),

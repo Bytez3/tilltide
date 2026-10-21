@@ -1,0 +1,129 @@
+/**
+ * Minimal PayPal Orders v2 client: create an order, read it, capture it.
+ * https://developer.paypal.com/docs/api/orders/v2/
+ */
+
+export interface PayPalConfig {
+  clientId: string
+  clientSecret: string
+  env: 'sandbox' | 'live'
+  /** Override the API host, e.g. to point at a local mock in tests. */
+  apiBase?: string
+}
+
+export type OrderStatus = 'CREATED' | 'SAVED' | 'APPROVED' | 'VOIDED' | 'COMPLETED' | 'PAYER_ACTION_REQUIRED'
+
+export interface PayPalOrder {
+  id: string
+  status: OrderStatus
+  payer?: { payer_id?: string }
+  links?: { href: string; rel: string; method?: string }[]
+  purchase_units?: {
+    reference_id?: string
+    payments?: { captures?: { id: string; status: string; amount: { currency_code: string; value: string } }[] }
+  }[]
+}
+
+export class PayPalError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly issue?: string,
+  ) {
+    super(message)
+  }
+}
+
+export interface CreateOrderInput {
+  /** Our payment id; echoed back as reference_id and used as the idempotency key. */
+  referenceId: string
+  /** Decimal string in `currency`, e.g. "4.50". */
+  value: string
+  currency: string
+  description?: string
+  brandName: string
+  returnUrl: string
+  cancelUrl: string
+}
+
+export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch = fetch) {
+  const base = config.apiBase ?? (config.env === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com')
+  let token: { value: string; expiresAt: number } | null = null
+
+  async function accessToken(): Promise<string> {
+    if (token && token.expiresAt > Date.now() + 60_000) return token.value
+    const res = await fetchImpl(`${base}/v1/oauth2/token`, {
+      method: 'POST',
+      headers: {
+        authorization: `Basic ${Buffer.from(`${config.clientId}:${config.clientSecret}`).toString('base64')}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: 'grant_type=client_credentials',
+    })
+    if (!res.ok) throw new PayPalError('PayPal authentication failed', res.status)
+    const body = (await res.json()) as { access_token: string; expires_in: number }
+    token = { value: body.access_token, expiresAt: Date.now() + body.expires_in * 1000 }
+    return token.value
+  }
+
+  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, requestId?: string): Promise<T> {
+    const res = await fetchImpl(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${await accessToken()}`,
+        'content-type': 'application/json',
+        prefer: 'return=representation',
+        ...(requestId ? { 'paypal-request-id': requestId } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    })
+    const json = (await res.json().catch(() => ({}))) as { message?: string; details?: { issue?: string }[] }
+    if (!res.ok) throw new PayPalError(json.message ?? `PayPal request failed (${res.status})`, res.status, json.details?.[0]?.issue)
+    return json as T
+  }
+
+  return {
+    createOrder: (input: CreateOrderInput) =>
+      call<PayPalOrder>(
+        'POST',
+        '/v2/checkout/orders',
+        {
+          intent: 'CAPTURE',
+          purchase_units: [
+            {
+              reference_id: input.referenceId,
+              description: input.description,
+              amount: { currency_code: input.currency, value: input.value },
+            },
+          ],
+          payment_source: {
+            paypal: {
+              experience_context: {
+                brand_name: input.brandName,
+                user_action: 'PAY_NOW',
+                shipping_preference: 'NO_SHIPPING',
+                return_url: input.returnUrl,
+                cancel_url: input.cancelUrl,
+              },
+            },
+          },
+        },
+        `create-${input.referenceId}`,
+      ),
+    getOrder: (id: string) => call<PayPalOrder>('GET', `/v2/checkout/orders/${encodeURIComponent(id)}`),
+    captureOrder: (id: string) =>
+      call<PayPalOrder>('POST', `/v2/checkout/orders/${encodeURIComponent(id)}/capture`, {}, `capture-${id}`),
+  }
+}
+
+export type PayPalClient = ReturnType<typeof createPayPalClient>
+
+/** The URL the customer opens to approve the order. */
+export function approvalUrl(order: PayPalOrder): string | null {
+  return order.links?.find((l) => l.rel === 'payer-action' || l.rel === 'approve')?.href ?? null
+}
+
+export function completedCapture(order: PayPalOrder) {
+  const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
+  return order.status === 'COMPLETED' && capture?.status === 'COMPLETED' ? capture : null
+}

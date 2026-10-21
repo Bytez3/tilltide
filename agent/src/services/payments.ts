@@ -1,7 +1,14 @@
 import { address, generateKeyPairSigner, type Address } from '@solana/kit'
-import { calculatePoints, encodeTransferRequest, getIssuePointsInstructions, type VerifiedPayment } from '@tilltide/agent-pay-kit'
+import {
+  calculatePoints,
+  encodeTransferRequest,
+  fromBaseUnits,
+  getIssuePointsInstructions,
+  type VerifiedPayment,
+} from '@tilltide/agent-pay-kit'
 import { config } from '../config'
-import { sql, type MerchantRow, type PaymentRow } from '../db'
+import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
+import { approvalUrl, completedCapture, createPayPalClient, type PayPalClient } from '../paypal'
 import { getPointsAuthority, sendAndConfirm } from '../solana'
 import { merchantToken } from './merchants'
 
@@ -22,6 +29,64 @@ export async function createPayment(merchant: MerchantRow, amount: bigint, label
     message: label,
   })
   return { payment: payment!, url }
+}
+
+let paypalClient: PayPalClient | null = null
+export function getPayPal(): PayPalClient | null {
+  if (!config.paypal) return null
+  paypalClient ??= createPayPalClient(config.paypal)
+  return paypalClient
+}
+
+/** PayPal checkout for customers without a crypto wallet. The QR opens PayPal's approval page. */
+export async function createPayPalPayment(merchant: MerchantRow, amount: bigint, label?: string) {
+  const paypal = getPayPal()
+  if (!paypal) throw new Error('PayPal is not configured on the server')
+  const [payment] = await sql<PaymentRow[]>`
+    insert into payments (merchant_id, rail, amount, token_symbol, label)
+    values (${merchant.id}, 'paypal', ${amount.toString()}, 'USD', ${label ?? null})
+    returning *`
+  try {
+    const order = await paypal.createOrder({
+      referenceId: payment!.id,
+      // PayPal takes 2-decimal currency; amounts with finer precision are rejected upstream.
+      value: Number(fromBaseUnits(amount, LEDGER_DECIMALS)).toFixed(2),
+      currency: config.paypalCurrency,
+      description: label,
+      brandName: merchant.name,
+      returnUrl: `${config.publicUrl}/paypal/return`,
+      cancelUrl: `${config.publicUrl}/paypal/cancel`,
+    })
+    const url = approvalUrl(order)
+    if (!url) throw new Error('PayPal did not return an approval link')
+    const [updated] = await sql<PaymentRow[]>`
+      update payments set paypal_order_id = ${order.id} where id = ${payment!.id} returning *`
+    return { payment: updated!, url }
+  } catch (err) {
+    await sql`update payments set status = 'failed', failure_reason = ${(err as Error).message} where id = ${payment!.id}`
+    throw err
+  }
+}
+
+/** Captures an approved PayPal order and marks the payment paid. Returns true if the status changed. */
+export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> {
+  const paypal = getPayPal()
+  if (!paypal || payment.status !== 'pending' || !payment.paypalOrderId) return false
+  let order = await paypal.getOrder(payment.paypalOrderId)
+  if (order.status === 'APPROVED') order = await paypal.captureOrder(order.id)
+  const capture = completedCapture(order)
+  if (capture) {
+    await sql`
+      update payments set status = 'paid', paypal_capture_id = ${capture.id}, paid_at = now(),
+        payer = ${order.payer?.payer_id ? `paypal:${order.payer.payer_id}` : null}
+      where id = ${payment.id} and status = 'pending'`
+    return true
+  }
+  if (order.status === 'VOIDED') {
+    await sql`update payments set status = 'failed', failure_reason = 'PayPal order was voided' where id = ${payment.id}`
+    return true
+  }
+  return false
 }
 
 export async function getPayment(id: string): Promise<PaymentRow | null> {
@@ -51,11 +116,11 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   if (!payment) return { issued: false, reason: 'Payment not found' }
   if (payment.status !== 'paid') return { issued: false, reason: `Payment is ${payment.status}, not paid` }
   if (payment.pointsSignature) return { issued: false, reason: 'Points were already issued for this payment' }
+  if (payment.rail !== 'solana') return { issued: false, reason: 'PayPal customers have no wallet to hold points yet' }
   if (!payment.payer) return { issued: false, reason: 'Payer wallet is unknown' }
 
   const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
-  const token = config.tokens[payment.tokenSymbol]
-  const points = calculatePoints(payment.amount, token.decimals, {
+  const points = calculatePoints(payment.amount, LEDGER_DECIMALS, {
     pointsPerUnit: Number(merchant!.pointsPerUnit),
     bonusMultiplier: Number(merchant!.bonusMultiplier),
   })
@@ -92,13 +157,12 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
 }
 
 export function serializePayment(p: PaymentRow) {
-  const token = config.tokens[p.tokenSymbol]
   return {
     id: p.id,
     rail: p.rail,
     reference: p.reference,
     amount: p.amount.toString(),
-    decimals: token.decimals,
+    decimals: LEDGER_DECIMALS,
     token: p.tokenSymbol,
     label: p.label,
     status: p.status,

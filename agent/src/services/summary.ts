@@ -53,7 +53,11 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     uniqueCustomers: byCustomer.size,
     topCustomers,
     pointsIssued: paid.reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
-    paymentsMissingPoints: paid.filter((p) => !p.pointsSignature).map((p) => p.id),
+    byRail: {
+      solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + p.amount, 0n), token.decimals),
+      paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
+    },
+    paymentsMissingPoints: paid.filter((p) => p.rail === 'solana' && !p.pointsSignature).map((p) => p.id),
     failed: payments.filter((p) => p.status === 'failed').map((p) => ({ id: p.id, reason: p.failureReason })),
     expiredRequests: payments.filter((p) => p.status === 'expired').length,
     stillPending: payments.filter((p) => p.status === 'pending').length,
@@ -68,6 +72,7 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
   const token = merchantToken(merchant)
   const payments = await getPaymentsForDay(merchant, date)
   const known = new Set(payments.map((p) => p.signature).filter(Boolean))
+  const paypalPaid = payments.filter((p) => p.rail === 'paypal' && p.status === 'paid')
 
   const [tillAccount] = await findAssociatedTokenPda({
     owner: address(merchant.wallet),
@@ -104,6 +109,9 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     tillBalance: fromBaseUnits(BigInt(balance), token.decimals),
     token: token.symbol,
     ledgerPaidCount: payments.filter((p) => p.status === 'paid').length,
+    // PayPal takings settle to the merchant's PayPal balance, not the till wallet.
+    paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount, 0n), token.decimals),
+    paypalCaptures: paypalPaid.map((p) => p.paypalCaptureId),
     sweptToOwnerToday: fromBaseUnits(
       sweeps.reduce((s, r) => s + r.amount, 0n),
       token.decimals,
