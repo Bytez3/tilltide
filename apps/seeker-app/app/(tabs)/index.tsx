@@ -5,7 +5,7 @@ import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
 import { GettingStarted } from '@/components/getting-started'
 import { PaidTick } from '@/components/paid-tick'
-import { SetupCard } from '@/components/setup-card'
+import { Welcome } from '@/components/welcome'
 import { Button, Chip, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
@@ -51,13 +51,7 @@ export default function ChargeScreen() {
   )
 
   if (loading) return <ActivityIndicator style={{ marginTop: 48 }} color={colors.sea} />
-  if (!merchant) {
-    return (
-      <ScrollView style={ui.screen} contentContainerStyle={ui.content}>
-        <SetupCard />
-      </ScrollView>
-    )
-  }
+  if (!merchant) return <Welcome />
 
   function press(key: string) {
     setError(null)

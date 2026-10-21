@@ -567,11 +567,14 @@ shop.post('/chat', rateLimit({ name: 'chat', windowMs: 60_000, max: 10, key: (c)
     return c.json(result)
   } catch (err) {
     if (err instanceof UsageLimitError) throw new HTTPException(429, { message: err.message })
-    if (err instanceof Anthropic.RateLimitError) throw new HTTPException(429, { message: 'The agent is busy, try again in a moment' })
-    if (err instanceof Anthropic.APIConnectionError) throw new HTTPException(503, { message: 'Could not reach the agent' })
-    if (err instanceof Anthropic.APIError) throw new HTTPException(502, { message: `Agent error: ${err.message}` })
+    if (err instanceof Anthropic.RateLimitError) throw new HTTPException(429, { message: 'The assistant is busy. Try again in a moment.' })
+    if (err instanceof Anthropic.APIConnectionError) throw new HTTPException(503, { message: 'Couldn\'t reach the assistant. Try again in a moment.' })
+    if (err instanceof Anthropic.APIError) {
+      console.error('assistant error', err.status, err.message)
+      throw new HTTPException(502, { message: 'The assistant hit a problem. Try again in a moment.' })
+    }
     if (err instanceof Error && err.message.includes('authentication method')) {
-      throw new HTTPException(503, { message: 'Agent is not configured (ANTHROPIC_API_KEY missing)' })
+      throw new HTTPException(503, { message: 'The assistant isn\'t switched on for this server yet. Your till, reports and exports all still work.' })
     }
     throw err
   }

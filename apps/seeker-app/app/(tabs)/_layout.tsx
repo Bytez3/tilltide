@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons'
-import { Tabs } from 'expo-router'
+import { router, Tabs } from 'expo-router'
+import { useEffect } from 'react'
 import { Text } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { BrandTitle } from '@/components/brand'
@@ -15,14 +16,20 @@ const tab = (title: string, icon: IconName) => ({
 
 export default function TabsLayout() {
   // Staff devices take payments only: no agent (it can propose moving money).
-  const { merchant, isStaff } = useMerchant()
+  const { merchant, loading, isStaff } = useMerchant()
+  // Signed out (or the session ended) on any tab: back to the welcome screen, since the tabs are hidden.
+  useEffect(() => {
+    if (!loading && !merchant) router.replace('/')
+  }, [loading, merchant])
   const insets = useSafeAreaInsets()
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: colors.sea,
         // The default bar squeezes the label box below its line height, which clips descenders (g, y).
-        tabBarStyle: { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom },
+        // Signed out, the phone shows only the welcome screen: no tabs, no header.
+        headerShown: !!merchant,
+        tabBarStyle: merchant ? { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom } : { display: 'none' },
         tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontFamily: fonts.medium },
         headerStyle: { backgroundColor: colors.bg },
         headerTitleAlign: 'left',
@@ -39,7 +46,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" options={tab('Charge', 'qr-code-outline')} />
       <Tabs.Screen name="activity" options={tab('Activity', 'receipt-outline')} />
-      <Tabs.Screen name="agent" options={{ ...tab('Agent', 'chatbubble-ellipses-outline'), href: isStaff ? null : undefined }} />
+      <Tabs.Screen name="agent" options={{ ...tab('Assistant', 'sparkles-outline'), href: isStaff ? null : undefined }} />
       <Tabs.Screen name="settings" options={tab('Settings', 'settings-outline')} />
     </Tabs>
   )
