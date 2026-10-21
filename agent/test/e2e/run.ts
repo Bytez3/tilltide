@@ -101,6 +101,8 @@ async function main() {
       POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
       AUTH_DOMAIN: 'tilltide.test',
       FX_RATES: 'GBP:1.25,EUR:1.10',
+      // Seeker Genesis Tokens and SKR only exist on mainnet; the customer stands in for a Seeker owner.
+      SEEKER_TEST_WALLETS: customer.address,
       RATE_LIMIT_AUTH: '1000',
       RATE_LIMIT_PER_IP: '100000',
       AGENT_DAILY_LIMIT: '2',
@@ -1110,6 +1112,19 @@ async function main() {
       assert.ok(lines.some((l) => l.includes(`"'=HYPERLINK(""http://evil"",""x"")"`)), 'formula defused')
       assert.equal((await fetch(link.body.url)).status, 404, 'single use')
       assert.equal((await api('POST', '/shop/export', { from: today, to: '2020-01-01' }, tillToken)).status, 400)
+    })
+
+    await step('Seeker bonus: a Seeker owner earns the shop\'s multiplier, and the receipt says so', async () => {
+      await api('PATCH', '/shop', { seekerBonus: 2, currency: 'USD', token: 'USDC' }, tillToken)
+      assert.equal((await api('GET', '/shop', undefined, tillToken)).body.seekerBonus, 2)
+      const sale = await api('POST', '/shop/payments', { amount: '3.00' }, tillToken)
+      await payFromUrl(sale.body.url, customer)
+      const paid = await waitFor(tillToken, sale.body.id, (p) => p.status === 'paid' && p.pointsIssued, 'seeker sale')
+      assert.equal(paid.points, '6', '3 points x2')
+      assert.equal(paid.seekerBonus, true)
+      assert.match(await fetch(`${API}/r/${sale.body.id}`).then((r) => r.text()), /Seeker bonus applied/)
+      assert.equal((await api('PATCH', '/shop', { seekerBonus: 5 }, tillToken)).status, 400, 'at most x3')
+      await api('PATCH', '/shop', { seekerBonus: 1 }, tillToken)
     })
 
     await step('migrations re-run cleanly on a database with every sweep status', async () => {

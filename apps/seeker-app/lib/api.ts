@@ -18,6 +18,8 @@ export interface Merchant {
   /** What one point is worth when spent, e.g. "0.01". */
   pointValue: string
   redeemMaxPercent: number
+  /** Points multiplier for Seeker owners (1 = off). */
+  seekerBonus: number
   /** 'staff' on a paired till device: can take payments, nothing else. */
   role?: 'owner' | 'staff'
   staffLabel?: string | null
@@ -49,6 +51,8 @@ export interface Payment {
   failureReason: string | null
   points: string | null
   pointsIssued: boolean
+  /** Points were multiplied by the shop's Seeker bonus. */
+  seekerBonus?: boolean
   allowPoints: boolean
   pointsRedeemed: string
   discount: string
@@ -158,7 +162,7 @@ export const api = {
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
   updateShop: (
-    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent' | 'currency' | 'closeTime'>> & {
+    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent' | 'currency' | 'closeTime' | 'seekerBonus'>> & {
       paypalEmail?: string | null
     },
   ) =>

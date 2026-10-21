@@ -94,7 +94,7 @@ export async function renderReceipt(paymentId: string) {
       ? html`<div class="card">
     <div class="muted">Your points at ${payment.shopName}</div>
     <div class="points">${balance}</div>
-    ${earned ? html`<div class="muted">+${earned} from this visit</div>` : html`<div class="muted">Points from this visit are on their way.</div>`}
+    ${earned ? html`<div class="muted">+${earned} from this visit${payment.pointsBonus ? ' (Seeker bonus applied)' : ''}</div>` : html`<div class="muted">Points from this visit are on their way.</div>`}
   </div>`
       : paypalLoyalty
         ? html`<div class="card">

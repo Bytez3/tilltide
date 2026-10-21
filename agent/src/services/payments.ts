@@ -8,12 +8,12 @@ import {
   sweepFee,
   type VerifiedPayment,
 } from '@tilltide/agent-pay-kit'
-// SKR bonus (Seeker holders) arrives after Breakpoint; until then every customer earns the base rate.
 import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { ledgerBalance, payerForCode, planPayPalRedemption } from './paypal-loyalty'
+import { isSeekerCustomer } from './seeker'
 import { toTokenUnits, usdPerUnit } from '../fx'
 import { paypalPayee } from './paypal-onboarding'
 import { merchantToken } from './merchants'
@@ -252,11 +252,16 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   }
 
   const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
+  // Seeker owners get the shop's bonus multiplier (if the shop turned one on).
+  const bonus = Number(merchant!.bonusMultiplier) > 1 && (await isSeekerCustomer(payment.payer!))
   // Points are earned on what the customer actually paid, not on the part they covered with points.
-  const points = calculatePoints(payment.amount - payment.discount, LEDGER_DECIMALS, {
-    pointsPerUnit: Number(merchant!.pointsPerUnit),
-    bonusMultiplier: Number(merchant!.bonusMultiplier),
-  })
+  const points = calculatePoints(
+    payment.amount - payment.discount,
+    LEDGER_DECIMALS,
+    { pointsPerUnit: Number(merchant!.pointsPerUnit), bonusMultiplier: Number(merchant!.bonusMultiplier) },
+    bonus,
+  )
+  if (bonus) await sql`update payments set points_bonus = true where id = ${payment.id}`
   if (points === 0n) {
     await sql`update payments set points = 0, points_status = 'none' where id = ${payment.id} and points_status is null`
     return { issued: true, points: 0n, signature: null }
@@ -311,6 +316,7 @@ export function serializePayment(p: PaymentRow) {
     failureReason: p.failureReason,
     points: p.points?.toString() ?? null,
     allowPoints: p.allowPoints,
+    seekerBonus: p.pointsBonus,
     pointsRedeemed: p.pointsRedeemed.toString(),
     discount: p.discount.toString(),
     paypalFee: p.paypalFee.toString(),

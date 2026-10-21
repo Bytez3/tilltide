@@ -16,6 +16,9 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
+      '@solana-mobile/skr-genesis-token':
+        specifier: ^1.0.1
+        version: 1.0.1(@solana/kit@8.5.0(typescript@5.9.3))
       '@solana-program/memo':
         specifier: ^0.16.0
         version: 0.16.0(@solana/kit@8.5.0(typescript@5.9.3))
@@ -2076,6 +2079,12 @@ packages:
     peerDependenciesMeta:
       react-native:
         optional: true
+
+  '@solana-mobile/skr-genesis-token@1.0.1':
+    resolution: {integrity: sha512-8DqnX0/euzWPVIGcsvR7QrKeNzApO8zBw8fRy+HTm1Nzbpn7M5O09YDSJKT7IsSjRLdmO1rpdnu8xMg03O+ZDg==}
+    engines: {node: '>=20.18.0'}
+    peerDependencies:
+      '@solana/kit': '>=5.0.0'
 
   '@solana-program/memo@0.16.0':
     resolution: {integrity: sha512-6lFy3qfJ/kWfvnc3rI5goHDLdQdWp1BSdK3Dyi00RnEqvkGGtxr2fHYqU70wwdU6EhMjViFwh5YNqHIFmKD/3w==}
@@ -8059,6 +8068,10 @@ snapshots:
       - fastestsmallesttextencoderdecoder
       - typescript
       - utf-8-validate
+
+  '@solana-mobile/skr-genesis-token@1.0.1(@solana/kit@8.5.0(typescript@5.9.3))':
+    dependencies:
+      '@solana/kit': 8.5.0(typescript@5.9.3)
 
   '@solana-program/memo@0.16.0(@solana/kit@8.5.0(typescript@5.9.3))':
     dependencies:

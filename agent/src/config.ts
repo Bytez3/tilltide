@@ -56,6 +56,14 @@ export const config = {
     treasury: process.env.TREASURY_WALLET ? (address(process.env.TREASURY_WALLET) as Address) : null,
     bps: feeBps,
   },
+  /** Seeker bonus: reads Seeker Genesis Tokens and SKR on mainnet (devnet has neither). */
+  seeker: {
+    rpcUrl: process.env.SEEKER_RPC_URL || (cluster === 'mainnet' ? process.env.SOLANA_RPC_URL || null : null),
+    /** Holding at least this much SKR (base units; default 1 SKR) also counts. */
+    skrMinimum: BigInt(process.env.SEEKER_SKR_MINIMUM ?? '1000000'),
+    /** Sandbox and tests only: wallets to treat as Seeker owners. */
+    testWallets: (process.env.SEEKER_TEST_WALLETS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  },
   /** Browser origins allowed to call the API (the web sandbox). The mobile app doesn't need CORS. */
   corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   /** Shared secret Cloudflare adds as x-tilltide-origin. When set, requests without it are refused. */

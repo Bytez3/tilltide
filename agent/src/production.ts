@@ -31,6 +31,7 @@ export function checkProductionConfig(env: NodeJS.ProcessEnv = process.env): Con
     fatal('PAYPAL_REQUIRE_CONNECTED is false on mainnet: PayPal sales would go to the account that owns the API keys, not the shop')
   }
   if (!config.pointsMint || !config.pointsAuthoritySecret) warn('Loyalty points are not configured (POINTS_MINT / POINTS_AUTHORITY_SECRET)')
+  if (config.seeker.testWallets.length) fatal('SEEKER_TEST_WALLETS gives the Seeker bonus to listed wallets; it is for tests and the sandbox only')
   if (env.FX_RATES) fatal('FX_RATES fixes exchange rates; it is for tests and the sandbox only')
   return problems
 }

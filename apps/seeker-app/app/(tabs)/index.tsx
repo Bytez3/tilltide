@@ -172,7 +172,7 @@ export default function ChargeScreen() {
             {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
               <Text style={ui.body}>
                 {payment.pointsIssued
-                  ? `${payment.points} points sent to the customer`
+                  ? `${payment.points} points sent to the customer${payment.seekerBonus ? ' (Seeker bonus)' : ''}`
                   : `${payment.points} points will be sent to the customer`}
               </Text>
             )}

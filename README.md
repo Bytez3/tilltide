@@ -32,6 +32,8 @@ A shop runs its till on a Solana Seeker or any Android phone.
 
 **End of day and accounts.** At closing time Tilltide writes the day's report, with an optional Claude note on top of facts computed without AI. The owner can export a month of sales, refunds and sweeps as CSV, via a one-time link.
 
+**Seeker bonus.** A shop can give Seeker owners extra points (×1.5, ×2 or ×3). A customer counts as a Seeker owner if their wallet holds a Seeker Genesis Token, checked with Solana Mobile's `@solana-mobile/skr-genesis-token`, or at least 1 SKR. Both are checked on mainnet, even while payments run on devnet. The receipt says when the bonus applied.
+
 **Receipts.** After a sale the till shows a receipt QR. The customer's receipt page (`/r/<id>`) shows what they paid, the points they used and earned, and their points balance.
 
 **PayPal first.** The till opens on PayPal.
@@ -83,7 +85,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 35 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 36 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.

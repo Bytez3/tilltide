@@ -39,7 +39,7 @@ Each task is marked **Steven** (accounts, keys, approvals, people) or **Claude**
 | Terms, privacy policy and UK crypto-promotion check, reviewed by a professional | Steven | Claude drafts them |
 | Mainnet: paid RPC (e.g. Helius), backups, alerts, `SOLANA_CLUSTER=mainnet` | Claude | |
 | Solana dApp Store listing for Seeker | Both | Needs a signed release build and a publisher account |
-| SKR bonus points for Seeker holders | Claude | After verifying the SKR mint |
+| SKR bonus points for Seeker holders | Claude | Done: Seeker Genesis Token or SKR, verified mint `SKRbvo6…GZhW3`; needs `SEEKER_RPC_URL` (mainnet RPC) |
 | Solana Mobile and Foundation grants, with pilot numbers | Both | `agent-pay-kit` is the public good |
 | Colosseum Eternal | Steven | |
 

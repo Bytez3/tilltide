@@ -69,6 +69,8 @@ function serializeMerchant(m: MerchantRow) {
     paypalEnabled: Boolean(config.paypal),
     pointValue: fromBaseUnits(m.pointValue, LEDGER_DECIMALS),
     redeemMaxPercent: m.redeemMaxPercent,
+    /** Points multiplier for Seeker owners (1 = off). */
+    seekerBonus: Number(m.bonusMultiplier),
     paypal: {
       status: m.paypalStatus,
       email: m.paypalEmail,
@@ -360,6 +362,8 @@ shop.patch('/', async (c) => {
       /** What one point is worth when spent, e.g. "0.01". */
       pointValue: z.string().regex(/^\d+(\.\d{1,6})?$/).optional(),
       redeemMaxPercent: z.number().int().min(0).max(90).optional(),
+      /** Points multiplier for Seeker owners (1 = off). */
+      seekerBonus: z.number().min(1).max(3).optional(),
       currency: z.enum(['GBP', 'USD', 'EUR']).optional(),
       /** Without PayPal onboarding: the PayPal email PayPal sales are paid to. */
       paypalEmail: z.email().max(254).nullable().optional(),
@@ -379,6 +383,7 @@ shop.patch('/', async (c) => {
       points_per_unit = ${input.pointsPerUnit ?? merchant.pointsPerUnit},
       point_value = ${input.pointValue !== undefined ? toBaseUnits(input.pointValue, LEDGER_DECIMALS).toString() : merchant.pointValue.toString()},
       redeem_max_percent = ${input.redeemMaxPercent ?? merchant.redeemMaxPercent},
+      bonus_multiplier = ${input.seekerBonus ?? merchant.bonusMultiplier},
       paypal_email = ${input.paypalEmail === undefined ? merchant.paypalEmail : input.paypalEmail},
       currency = ${input.currency ?? merchant.currency},
       close_time = ${input.closeTime ?? merchant.closeTime},

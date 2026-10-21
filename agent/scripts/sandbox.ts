@@ -96,6 +96,8 @@ Object.assign(process.env, {
   PAYPAL_CLIENT_SECRET: 'sandbox',
   PAYPAL_API_BASE: `http://127.0.0.1:${PAYPAL_PORT}`,
   WATCH_INTERVAL_MS: '1000',
+  // Seeker tokens only exist on mainnet; the sandbox customer stands in for a Seeker owner.
+  SEEKER_TEST_WALLETS: customer.address,
 })
 const paypal = startMockPayPal(PAYPAL_PORT)
 

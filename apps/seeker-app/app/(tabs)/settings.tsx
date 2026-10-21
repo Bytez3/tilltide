@@ -23,6 +23,7 @@ export default function SettingsScreen() {
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
   const [currency, setCurrency] = useState<'GBP' | 'USD' | 'EUR'>('GBP')
   const [closeTime, setCloseTime] = useState('17:30')
+  const [seekerBonus, setSeekerBonus] = useState(1)
   const [pointValue, setPointValue] = useState('')
   const [maxPercent, setMaxPercent] = useState('')
   const [saving, setSaving] = useState(false)
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
     setToken(merchant.token)
     setCurrency(merchant.currency)
     setCloseTime(merchant.closeTime)
+    setSeekerBonus(merchant.seekerBonus)
     setPointValue(merchant.pointValue)
     setPaypalEmail(merchant.paypal.email ?? '')
     setMaxPercent(String(merchant.redeemMaxPercent))
@@ -64,6 +66,7 @@ export default function SettingsScreen() {
         pointValue: pointValue.trim(),
         redeemMaxPercent: percent,
         closeTime: closeTime.trim(),
+        seekerBonus,
       })
       setMessage('Saved')
     } catch (e) {
@@ -200,6 +203,22 @@ export default function SettingsScreen() {
           <TextInput style={ui.input} keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
           <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
           <TextInput style={ui.input} keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
+
+          <Text style={[ui.body, { marginTop: 8 }]}>Seeker owners earn</Text>
+          <View style={ui.row}>
+            {[1, 1.5, 2, 3].map((m) => (
+              <Pressable
+                key={m}
+                onPress={() => setSeekerBonus(m)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: seekerBonus === m }}
+                style={[ui.input, { flex: 1, alignItems: 'center' }, seekerBonus === m && { borderColor: colors.sea, borderWidth: 2 }]}
+              >
+                <Text style={[ui.body, { fontWeight: '600' }]}>{m === 1 ? 'Off' : `×${m}`}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text style={ui.muted}>Extra points for customers paying from a Solana Seeker phone (Seeker Genesis Token or SKR).</Text>
 
           <Text style={[ui.body, { marginTop: 8 }]}>Closing time (end-of-day report)</Text>
           <TextInput style={ui.input} value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />

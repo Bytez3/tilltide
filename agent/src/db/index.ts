@@ -71,6 +71,8 @@ export interface PaymentRow {
   pointsRedeemed: bigint
   /** Part of `amount` covered by points. The till received amount - discount. */
   discount: bigint
+  /** Points were multiplied by the shop's Seeker bonus. */
+  pointsBonus: boolean
   /** Tilltide's platform fee on a PayPal sale (6-decimal units). */
   paypalFee: bigint
   /** For PayPal loyalty: whose points this sale spends ('paypal:<payer id>'). */

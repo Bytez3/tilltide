@@ -206,3 +206,8 @@ create table if not exists export_tokens (
   expires_at timestamptz not null,
   used_at timestamptz
 );
+
+-- Seeker bonus applied to a sale's points (the shop's bonus_multiplier, for Seeker owners).
+alter table payments add column if not exists points_bonus boolean not null default false;
+alter table merchants drop constraint if exists merchants_bonus_multiplier_check;
+alter table merchants add constraint merchants_bonus_multiplier_check check (bonus_multiplier between 1 and 3);
