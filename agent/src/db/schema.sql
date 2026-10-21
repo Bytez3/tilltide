@@ -182,3 +182,27 @@ create table if not exists staff_invites (
   expires_at timestamptz not null,
   used_at timestamptz
 );
+
+-- End-of-day reports, written at the shop's closing time (or on demand).
+alter table merchants add column if not exists close_time text not null default '17:30';
+alter table merchants drop constraint if exists merchants_close_time_check;
+alter table merchants add constraint merchants_close_time_check check (close_time ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$');
+create table if not exists daily_reports (
+  merchant_id uuid not null references merchants(id),
+  day date not null,
+  summary jsonb not null,
+  text text not null,
+  narrative text,
+  created_at timestamptz not null default now(),
+  primary key (merchant_id, day)
+);
+
+-- One-time CSV download links (the session token never goes in a URL).
+create table if not exists export_tokens (
+  token_hash text primary key,
+  merchant_id uuid not null references merchants(id),
+  from_day date not null,
+  to_day date not null,
+  expires_at timestamptz not null,
+  used_at timestamptz
+);

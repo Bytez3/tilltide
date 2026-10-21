@@ -25,6 +25,8 @@ import { OnboardingError, refreshPayPalConnection, startPayPalOnboarding } from 
 import { PayPalError } from './paypal'
 import { approveRefund, getRefund, proposeRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
+import { listReports, writeDailyReport } from './services/reports'
+import { createExportToken, exportCsv, redeemExportToken } from './services/export'
 import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
 import { checkPayment } from './services/watcher'
 import { rpc } from './solana'
@@ -61,6 +63,7 @@ function serializeMerchant(m: MerchantRow) {
     pointsPerUnit: Number(m.pointsPerUnit),
     timezone: m.timezone,
     currency: m.currency,
+    closeTime: m.closeTime,
     cluster: config.cluster,
     pointsMint: config.pointsMint,
     paypalEnabled: Boolean(config.paypal),
@@ -183,6 +186,22 @@ app.post('/pay/:id', async (c) => {
     if (err instanceof RedeemError) throw new HTTPException(400, { message: err.message })
     throw err
   }
+})
+
+/** CSV download via a one-time token from POST /shop/export. */
+app.get('/export/:file', async (c) => {
+  const token = c.req.param('file').replace(/\.csv$/, '')
+  const grant = /^[A-Za-z0-9_-]{20,64}$/.test(token) ? await redeemExportToken(token) : null
+  if (!grant) throw new HTTPException(404, { message: 'This download link has expired. Make a new one in the app.' })
+  const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${grant.merchantId}`
+  const from = grant.fromDay.toISOString().slice(0, 10)
+  const to = grant.toDay.toISOString().slice(0, 10)
+  const csv = await exportCsv(merchant!, from, to)
+  return c.body(csv, 200, {
+    'content-type': 'text/csv; charset=utf-8',
+    'content-disposition': `attachment; filename="tilltide-${from}-to-${to}.csv"`,
+    'cache-control': 'no-store',
+  })
 })
 
 /** Public customer receipt (the till shows it as a QR after a sale). */
@@ -330,6 +349,8 @@ shop.patch('/', async (c) => {
       /** Without PayPal onboarding: the PayPal email PayPal sales are paid to. */
       paypalEmail: z.email().max(254).nullable().optional(),
       timezone: timezone.optional(),
+      /** Local closing time for the end-of-day report, HH:MM. */
+      closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     }),
   )
   if (input.ownerWallet && input.ownerWallet === merchant.wallet) {
@@ -345,6 +366,7 @@ shop.patch('/', async (c) => {
       redeem_max_percent = ${input.redeemMaxPercent ?? merchant.redeemMaxPercent},
       paypal_email = ${input.paypalEmail === undefined ? merchant.paypalEmail : input.paypalEmail},
       currency = ${input.currency ?? merchant.currency},
+      close_time = ${input.closeTime ?? merchant.closeTime},
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
@@ -465,6 +487,29 @@ shop.get('/sweeps', async (c) => {
   const rows = await sql<SweepRow[]>`
     select * from sweeps where merchant_id = ${merchant.id} order by created_at desc limit 20`
   return c.json(rows.map(serializeSweep))
+})
+
+/** End-of-day reports, newest first. */
+shop.get('/reports', async (c) => c.json(await listReports(await myShop(c))))
+
+/** Write (or rewrite) the end-of-day report for a day now. */
+shop.post('/reports', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ date: z.string().optional() }))
+  const date = input.date ?? todayIn(merchant.timezone)
+  if (!isDate(date)) throw new HTTPException(400, { message: 'date must be YYYY-MM-DD' })
+  const report = await writeDailyReport(merchant, date)
+  return c.json({ date: report.date, text: report.text, narrative: report.narrative, createdAt: report.createdAt })
+})
+
+/** A one-time link to download sales, refunds and sweeps as CSV (the session token never goes in a URL). */
+shop.post('/export', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ from: z.string(), to: z.string() }))
+  if (!isDate(input.from) || !isDate(input.to) || input.from > input.to) throw new HTTPException(400, { message: 'Use from/to dates YYYY-MM-DD, from on or before to' })
+  if ((Date.parse(input.to) - Date.parse(input.from)) / 86_400_000 > 366) throw new HTTPException(400, { message: 'Export at most a year at a time' })
+  const token = await createExportToken(merchant, input.from, input.to)
+  return c.json({ url: `${config.publicUrl}/export/${token}.csv`, expiresInMinutes: 5 })
 })
 
 /** Starts Connect-with-PayPal: returns PayPal's onboarding link for the owner to open. */

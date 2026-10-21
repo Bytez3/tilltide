@@ -5,6 +5,7 @@ import { sql, type MerchantRow, type PaymentRow, type RefundRow } from '../db'
 import { rpc } from '../solana'
 import { checkPayPalPayment, getPayPal, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
 import { executeRefund } from './refunds'
+import { runDueReports } from './reports'
 import { findRedeemPayment } from './redeem'
 
 /** Per payment: reference transactions already known not to be a valid payment (see findPayment). */
@@ -121,6 +122,9 @@ async function tick() {
         }
       }
     }
+
+    // End-of-day reports for shops past closing time.
+    await runDueReports().catch((err) => console.error('End-of-day reports failed', err))
 
     // Retry points that failed or never confirmed. issuePointsForPayment checks the chain before resending.
     if (!config.pointsMint || !config.pointsAuthoritySecret) return

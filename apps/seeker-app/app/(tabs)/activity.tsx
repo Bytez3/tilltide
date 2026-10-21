@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native'
+import { FlatList, Linking, Pressable, RefreshControl, Text, TextInput, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
@@ -35,6 +35,12 @@ export default function ActivityScreen() {
   const [sweep, setSweep] = useState<Sweep | null>(null)
   const [refund, setRefund] = useState<Refund | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const reports = useQuery({
+    queryKey: ['reports', merchant?.id],
+    queryFn: () => api.reports(),
+    enabled: !!merchant && !isStaff,
+  })
+  const [reportBusy, setReportBusy] = useState(false)
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
   if (!merchant) {
@@ -70,6 +76,31 @@ export default function ActivityScreen() {
     setError(null)
     try {
       setRefund(await api.proposeRefund(payment.id, undefined, payment.label ? `Refund for ${payment.label}` : 'Refund'))
+    } catch (e) {
+      setError(message(e))
+    }
+  }
+
+  async function writeReport() {
+    setReportBusy(true)
+    setError(null)
+    try {
+      await api.writeReport()
+      await reports.refetch()
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setReportBusy(false)
+    }
+  }
+
+  /** This month so far, as CSV, via a one-time link. */
+  async function exportMonth() {
+    setError(null)
+    try {
+      const today = new Date().toISOString().slice(0, 10)
+      const { url } = await api.exportLink(`${today.slice(0, 8)}01`, today)
+      await Linking.openURL(url)
     } catch (e) {
       setError(message(e))
     }
@@ -121,6 +152,24 @@ export default function ActivityScreen() {
               </View>
             )}
           </View>
+          {!isStaff && (
+            <View style={ui.card}>
+              <Text style={ui.muted}>End of day{merchant.closeTime ? ` (written at ${merchant.closeTime})` : ''}</Text>
+              {reports.data?.[0] ? (
+                <>
+                  <Text style={ui.muted}>{reports.data[0].date}</Text>
+                  {reports.data[0].narrative && <Text style={ui.body}>{reports.data[0].narrative}</Text>}
+                  <Text style={reports.data[0].narrative ? ui.muted : ui.body}>{reports.data[0].text}</Text>
+                </>
+              ) : (
+                <Text style={ui.muted}>No report yet today.</Text>
+              )}
+              <View style={ui.row}>
+                <Button title="Write today's report" variant="secondary" onPress={writeReport} loading={reportBusy} style={{ flex: 1 }} />
+                <Button title="Export CSV" variant="secondary" onPress={exportMonth} style={{ flex: 1 }} />
+              </View>
+            </View>
+          )}
           {sweep && <SweepCard sweep={sweep} onChange={(next) => (setSweep(next), refresh())} />}
           {refund && <RefundCard refund={refund} onChange={(next) => (setRefund(next), refresh())} />}
           {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}

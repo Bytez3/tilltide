@@ -31,6 +31,8 @@ export interface MerchantRow {
   paypalStatus: 'none' | 'pending' | 'connected'
   /** Prices, takings and points are in this currency. */
   currency: 'GBP' | 'USD' | 'EUR'
+  /** Local closing time (HH:MM) when the end-of-day report is written. */
+  closeTime: string
   createdAt: Date
 }
 

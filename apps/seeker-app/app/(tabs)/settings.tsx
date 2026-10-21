@@ -22,6 +22,7 @@ export default function SettingsScreen() {
   const [owner, setOwner] = useState('')
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
   const [currency, setCurrency] = useState<'GBP' | 'USD' | 'EUR'>('GBP')
+  const [closeTime, setCloseTime] = useState('17:30')
   const [pointValue, setPointValue] = useState('')
   const [maxPercent, setMaxPercent] = useState('')
   const [saving, setSaving] = useState(false)
@@ -35,6 +36,7 @@ export default function SettingsScreen() {
     setOwner(merchant.ownerWallet ?? '')
     setToken(merchant.token)
     setCurrency(merchant.currency)
+    setCloseTime(merchant.closeTime)
     setPointValue(merchant.pointValue)
     setPaypalEmail(merchant.paypal.email ?? '')
     setMaxPercent(String(merchant.redeemMaxPercent))
@@ -51,9 +53,18 @@ export default function SettingsScreen() {
       const percent = Number(maxPercent)
       if (!/^\d+(\.\d{1,6})?$/.test(pointValue.trim())) throw new Error('Point value must be a number like 0.01')
       if (!Number.isInteger(percent) || percent < 0 || percent > 90) throw new Error('Points can cover 0 to 90% of a bill')
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closeTime.trim())) throw new Error('Closing time must look like 17:30')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
-      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token, currency, pointValue: pointValue.trim(), redeemMaxPercent: percent })
+      await update({
+        pointsPerUnit,
+        ownerWallet: ownerWallet || null,
+        token,
+        currency,
+        pointValue: pointValue.trim(),
+        redeemMaxPercent: percent,
+        closeTime: closeTime.trim(),
+      })
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -189,6 +200,9 @@ export default function SettingsScreen() {
           <TextInput style={ui.input} keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
           <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
           <TextInput style={ui.input} keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
+
+          <Text style={[ui.body, { marginTop: 8 }]}>Closing time (end-of-day report)</Text>
+          <TextInput style={ui.input} value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />
 
           <Text style={[ui.body, { marginTop: 8 }]}>Owner wallet (where sweeps go)</Text>
           <TextInput style={ui.input} autoCapitalize="none" autoCorrect={false} placeholder="Solana address" value={owner} onChangeText={setOwner} />

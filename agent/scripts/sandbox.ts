@@ -6,7 +6,7 @@
  * Nothing here touches devnet or mainnet. Sandbox-only routes live under /sandbox.
  */
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { serve } from '@hono/node-server'
@@ -51,8 +51,13 @@ const dir = mkdtempSync(join(tmpdir(), 'tilltide-sandbox-'))
 const tokenAuthority = await generateKeyPairSigner()
 console.log('Starting local Solana validator…')
 const { rpc, stop } = await startLocalValidator({ port: RPC_PORT, ledgerDir: join(dir, 'ledger'), tokenAuthority: tokenAuthority.address })
-process.on('SIGINT', () => (stop(), process.exit(0)))
-process.on('SIGTERM', () => (stop(), process.exit(0)))
+const shutdown = () => {
+  stop()
+  // Ledgers grow to gigabytes and /tmp is often in memory: remove it on the way out.
+  setTimeout(() => (rmSync(dir, { recursive: true, force: true }), process.exit(0)), 1500)
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
 
 const admin = postgres(ADMIN_DB, { onnotice: () => {} })
 await admin.unsafe(`drop database if exists ${DB} with (force)`)

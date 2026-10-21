@@ -10,6 +10,8 @@ export interface Merchant {
   timezone: string
   /** Prices, takings and points are in this currency. */
   currency: 'GBP' | 'USD' | 'EUR'
+  /** Local closing time (HH:MM): the end-of-day report is written then. */
+  closeTime: string
   cluster: 'devnet' | 'mainnet'
   pointsMint: string | null
   paypalEnabled: boolean
@@ -156,7 +158,7 @@ export const api = {
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
   updateShop: (
-    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent' | 'currency'>> & {
+    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent' | 'currency' | 'closeTime'>> & {
       paypalEmail?: string | null
     },
   ) =>
@@ -180,6 +182,9 @@ export const api = {
 
   beginSweep: (id: string, lastValidBlockHeight: bigint) =>
     request<Sweep>(`/shop/sweeps/${id}/begin`, post({ lastValidBlockHeight: lastValidBlockHeight.toString() })),
+  reports: () => request<{ date: string; text: string; narrative: string | null; createdAt: string }[]>('/shop/reports'),
+  writeReport: (date?: string) => request<{ date: string; text: string; narrative: string | null; createdAt: string }>('/shop/reports', post({ date })),
+  exportLink: (from: string, to: string) => request<{ url: string; expiresInMinutes: number }>('/shop/export', post({ from, to })),
   till: () => request<{ token: string; balance: string; display: string }>('/shop/till'),
   proposeSweep: (amount: string, reason?: string) => request<Sweep>('/shop/sweeps', post({ amount, reason })),
   proposeRefund: (paymentId: string, amount?: string, reason?: string) =>

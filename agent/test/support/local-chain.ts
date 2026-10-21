@@ -1,8 +1,8 @@
 /** A local Solana chain with test-controlled USDC/PYUSD mints, plus a stand-in PayPal. Used by the e2e suite and the browser sandbox. */
 import { execFileSync, spawn } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { address, createSolanaRpc, getAddressEncoder, type Address } from '@solana/kit'
 
 export const USDC = address('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
@@ -160,6 +160,8 @@ export async function startLocalValidator(opts: { port: number; ledgerDir: strin
     'solana-test-validator',
     [
       '--reset', '--quiet', '--ledger', opts.ledgerDir, '--rpc-port', String(opts.port),
+      // Keep the ledger small; nothing here needs old history.
+      '--limit-ledger-size', '1000000',
       '--faucet-port', String(opts.port + 1000), '--gossip-port', String(opts.port + 2000),
       '--dynamic-port-range', `${opts.port + 3000}-${opts.port + 3100}`,
       '--account', USDC, mintAccountFile(dir, USDC, opts.tokenAuthority),
@@ -178,5 +180,12 @@ export async function startLocalValidator(opts: { port: number; ledgerDir: strin
     },
     60_000,
   )
-  return { rpc, stop: () => validator.kill('SIGINT') }
+  return {
+    rpc,
+    stop: () => {
+      validator.kill('SIGINT')
+      // Ledgers grow to gigabytes and /tmp is often in memory: always clean up.
+      setTimeout(() => rmSync(dirname(opts.ledgerDir), { recursive: true, force: true }), 1500).unref?.()
+    },
+  }
 }

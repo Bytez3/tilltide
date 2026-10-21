@@ -61,6 +61,7 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     uniqueCustomers: byCustomer.size,
     topCustomers,
     pointsRedeemed: paid.reduce((sum, p) => sum + p.pointsRedeemed, 0n).toString(),
+    paypalFees: fromBaseUnits(paid.reduce((sum, p) => sum + p.paypalFee, 0n), token.decimals),
     pointsDiscount: fromBaseUnits(paid.reduce((sum, p) => sum + p.discount, 0n), token.decimals),
     pointsIssued: paid.filter((p) => p.pointsStatus === 'issued').reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
     byRail: {

@@ -12,7 +12,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { generateKeyPairSync } from 'node:crypto'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import assert from 'node:assert/strict'
@@ -381,6 +381,9 @@ async function main() {
         ['POST', '/shop/paypal/connect'],
         ['POST', '/shop/staff/invites', { label: 'x' }],
         ['GET', '/shop/staff'],
+        ['GET', '/shop/reports'],
+        ['POST', '/shop/reports', {}],
+        ['POST', '/shop/export', { from: '2026-01-01', to: '2026-01-02' }],
       ]
       for (const [method, path, payload] of forbidden) {
         const r = await api(method, path, payload, staff)
@@ -1078,6 +1081,34 @@ async function main() {
       await api('PATCH', '/shop', { currency: 'USD' }, tillToken)
     })
 
+    await step('end-of-day report and CSV export (one-time link, formula-safe)', async () => {
+      const made = await api('POST', '/shop/reports', {}, tillToken)
+      assert.equal(made.status, 200, JSON.stringify(made.body))
+      assert.match(made.body.text, /from \d+ sales \(PayPal .*, wallet .*\)\. Average sale/)
+      assert.match(made.body.text, /refund/)
+      assert.equal(made.body.narrative, null, 'no Claude key in tests: facts only')
+      const list = await api('GET', '/shop/reports', undefined, tillToken)
+      assert.equal(list.body[0].date, made.body.date)
+      assert.equal((await api('POST', '/shop/reports', { date: '2026-02-31' }, tillToken)).status, 400)
+
+      // A label someone typed as a spreadsheet formula.
+      await api('POST', '/shop/payments', { amount: '1.00', label: '=HYPERLINK("http://evil","x")' }, tillToken)
+      const today = made.body.date
+      const link = await api('POST', '/shop/export', { from: today, to: today }, tillToken)
+      assert.equal(link.status, 200)
+      const res = await fetch(link.body.url)
+      assert.equal(res.headers.get('content-type'), 'text/csv; charset=utf-8')
+      const csv = await res.text()
+      const lines = csv.trim().split('\r\n')
+      assert.equal(lines[0], 'date,time,type,status,description,currency,price,points_discount,received,paid_with,token_amount,fx_rate,customer,points_earned,points_spent,tilltide_fee,reference,id')
+      assert.ok(lines.some((l) => l.includes(',sale,paid,2 pasties,USD,4.50,')))
+      assert.ok(lines.some((l) => l.includes(',refund,completed,')))
+      assert.ok(lines.some((l) => l.includes(',sweep to owner,confirmed,')))
+      assert.ok(lines.some((l) => l.includes(`"'=HYPERLINK(""http://evil"",""x"")"`)), 'formula defused')
+      assert.equal((await fetch(link.body.url)).status, 404, 'single use')
+      assert.equal((await api('POST', '/shop/export', { from: today, to: '2020-01-01' }, tillToken)).status, 400)
+    })
+
     await step('migrations re-run cleanly on a database with every sweep status', async () => {
       const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
       await sql`insert into sweeps (merchant_id, amount, token_symbol, to_wallet, status) values (${merchant.id}, 1, 'USDC', ${owner.address}, 'failed')`
@@ -1089,6 +1120,8 @@ async function main() {
   } finally {
     server?.close()
     stopValidator()
+    await new Promise((r) => setTimeout(r, 2000))
+    rmSync(dir, { recursive: true, force: true })
   }
 }
 
