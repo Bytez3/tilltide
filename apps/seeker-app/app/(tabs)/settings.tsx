@@ -17,6 +17,7 @@ export default function SettingsScreen() {
   const [rate, setRate] = useState('')
   const [owner, setOwner] = useState('')
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
+  const [currency, setCurrency] = useState<'GBP' | 'USD' | 'EUR'>('GBP')
   const [pointValue, setPointValue] = useState('')
   const [maxPercent, setMaxPercent] = useState('')
   const [saving, setSaving] = useState(false)
@@ -29,6 +30,7 @@ export default function SettingsScreen() {
     setRate(String(merchant.pointsPerUnit))
     setOwner(merchant.ownerWallet ?? '')
     setToken(merchant.token)
+    setCurrency(merchant.currency)
     setPointValue(merchant.pointValue)
     setPaypalEmail(merchant.paypal.email ?? '')
     setMaxPercent(String(merchant.redeemMaxPercent))
@@ -47,7 +49,7 @@ export default function SettingsScreen() {
       if (!Number.isInteger(percent) || percent < 0 || percent > 90) throw new Error('Points can cover 0 to 90% of a bill')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
-      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token, pointValue: pointValue.trim(), redeemMaxPercent: percent })
+      await update({ pointsPerUnit, ownerWallet: ownerWallet || null, token, currency, pointValue: pointValue.trim(), redeemMaxPercent: percent })
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
@@ -117,7 +119,22 @@ export default function SettingsScreen() {
             Till wallet {shortAddress(merchant.wallet)} · {merchant.token} · {merchant.cluster}
           </Text>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Take payments in</Text>
+          <Text style={[ui.body, { marginTop: 8 }]}>Prices in</Text>
+          <View style={ui.row}>
+            {(['GBP', 'EUR', 'USD'] as const).map((c) => (
+              <Pressable
+                key={c}
+                onPress={() => setCurrency(c)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: currency === c }}
+                style={[ui.input, { flex: 1, alignItems: 'center' }, currency === c && { borderColor: colors.sea, borderWidth: 2 }]}
+              >
+                <Text style={[ui.body, { fontWeight: '600' }]}>{c}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={[ui.body, { marginTop: 8 }]}>Wallet payments in</Text>
           <View style={ui.row}>
             {(['USDC', 'PYUSD'] as const).map((t) => (
               <Pressable
@@ -132,10 +149,10 @@ export default function SettingsScreen() {
             ))}
           </View>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {token}</Text>
+          <Text style={[ui.body, { marginTop: 8 }]}>Points per 1 {currency}</Text>
           <TextInput style={ui.input} keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
 
-          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({token})</Text>
+          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({currency})</Text>
           <TextInput style={ui.input} keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
           <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
           <TextInput style={ui.input} keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />

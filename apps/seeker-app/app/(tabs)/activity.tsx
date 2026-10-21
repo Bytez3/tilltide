@@ -8,7 +8,7 @@ import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Refund, Sweep } from '@/lib/api'
-import { formatAmount, shortAddress } from '@/lib/format'
+import { currencySymbol, formatMoney, shortAddress } from '@/lib/format'
 
 const STATUS_COLOUR: Record<Payment['status'], string> = {
   paid: colors.paid,
@@ -92,7 +92,7 @@ export default function ActivityScreen() {
         <View style={{ gap: 12 }}>
           <View style={ui.card}>
             <Text style={ui.muted}>Today</Text>
-            <Text style={ui.h1}>{s ? `${Number(s.takings).toFixed(2)} ${s.token}` : '—'}</Text>
+            <Text style={ui.h1}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
             {s && (
               <Text style={ui.muted}>
                 {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
@@ -100,7 +100,8 @@ export default function ActivityScreen() {
             )}
             {s && s.refunds.count > 0 && (
               <Text style={ui.muted}>
-                {s.refunds.count} refund{s.refunds.count === 1 ? '' : 's'} · net {Number(s.netTakings).toFixed(2)} USD
+                {s.refunds.count} refund{s.refunds.count === 1 ? '' : 's'} · net {currencySymbol(s.token)}
+                {Number(s.netTakings).toFixed(2)}
               </Text>
             )}
             {s && Number(s.byRail.paypal) > 0 && (
@@ -129,7 +130,7 @@ export default function ActivityScreen() {
       renderItem={({ item }) => (
         <View style={[ui.card, ui.row, { justifyContent: 'space-between' }]}>
           <View style={{ gap: 2, flexShrink: 1 }}>
-            <Text style={ui.h2}>{formatAmount(item.amount, item.decimals, item.token)}</Text>
+            <Text style={ui.h2}>{formatMoney(item.amount, item.decimals, item.currency)}</Text>
             <Text style={ui.muted}>
               {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               {item.rail === 'paypal' ? ' · PayPal' : item.payer ? ` · ${shortAddress(item.payer)}` : ''}

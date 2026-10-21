@@ -8,6 +8,8 @@ export interface Merchant {
   token: 'USDC' | 'PYUSD'
   pointsPerUnit: number
   timezone: string
+  /** Prices, takings and points are in this currency. */
+  currency: 'GBP' | 'USD' | 'EUR'
   cluster: 'devnet' | 'mainnet'
   pointsMint: string | null
   paypalEnabled: boolean
@@ -31,6 +33,9 @@ export interface Payment {
   reference: string | null
   amount: string
   decimals: number
+  currency: string
+  /** Wallet sales: what the customer sends, in `token`. */
+  tokenAmount: string | null
   token: string
   label: string | null
   status: 'pending' | 'paid' | 'failed' | 'expired'
@@ -144,7 +149,7 @@ export const api = {
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
   updateShop: (
-    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent'>> & {
+    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent' | 'currency'>> & {
       paypalEmail?: string | null
     },
   ) =>

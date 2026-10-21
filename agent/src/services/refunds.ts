@@ -32,13 +32,13 @@ export async function proposeRefund(merchant: MerchantRow, paymentId: string, am
     const refundAmount = amount ?? remaining
     if (refundAmount <= 0n) throw new RefundError('This payment has already been fully refunded')
     if (refundAmount > remaining) {
-      throw new RefundError(`Only ${fromBaseUnits(remaining, LEDGER_DECIMALS)} USD of this payment can still be refunded`)
+      throw new RefundError(`Only ${fromBaseUnits(remaining, LEDGER_DECIMALS)} ${payment.currency} of this payment can still be refunded`)
     }
     if (refundAmount % 10_000n !== 0n) throw new RefundError('PayPal refunds must be in whole cents')
 
     const [row] = await tx<RefundRow[]>`
-      insert into refunds (merchant_id, payment_id, amount, reason)
-      values (${merchant.id}, ${payment.id}, ${refundAmount.toString()}, ${reason}) returning *`
+      insert into refunds (merchant_id, payment_id, amount, currency, reason)
+      values (${merchant.id}, ${payment.id}, ${refundAmount.toString()}, ${payment.currency}, ${reason}) returning *`
     return row!
   })
 }
@@ -52,7 +52,7 @@ export async function getRefund(merchant: MerchantRow, id: string): Promise<Refu
 export function approvalStatement(refund: RefundRow, payment: Pick<PaymentRow, 'label'>): string {
   const amount = Number(fromBaseUnits(refund.amount, LEDGER_DECIMALS)).toFixed(2)
   const what = payment.label ? ` for "${payment.label.replace(/["\n\r]/g, '')}"` : ''
-  return `Approve a PayPal refund of ${amount} ${config.paypalCurrency}${what}. Refund ${refund.id}.`
+  return `Approve a PayPal refund of ${amount} ${refund.currency}${what}. Refund ${refund.id}.`
 }
 
 /** A fresh single-use challenge for the owner's wallet to sign (Sign In With Solana format). */
@@ -138,7 +138,7 @@ export async function executeRefund(refund: RefundRow): Promise<RefundRow> {
   try {
     const result = await paypal.refundCapture(
       payment!.paypalCaptureId!,
-      { value: Number(fromBaseUnits(refund.amount, LEDGER_DECIMALS)).toFixed(2), currency: config.paypalCurrency },
+      { value: Number(fromBaseUnits(refund.amount, LEDGER_DECIMALS)).toFixed(2), currency: refund.currency },
       `refund-${refund.id}`,
       refund.reason ?? undefined,
       // A connected shop's sale is refunded on its behalf, from its PayPal.
@@ -165,7 +165,7 @@ export function serializeRefund(r: RefundRow) {
     paymentId: r.paymentId,
     amount: r.amount.toString(),
     display: Number(fromBaseUnits(r.amount, LEDGER_DECIMALS)).toFixed(2),
-    currency: config.paypalCurrency,
+    currency: r.currency,
     reason: r.reason,
     status: r.status,
     error: r.error,

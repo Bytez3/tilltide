@@ -51,8 +51,8 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
   return {
     date,
     timezone: merchant.timezone,
-    // Every rail is in US dollars 1:1 (USDC, PYUSD, PayPal USD), so the total is in USD.
-    token: 'USD',
+    // Prices are in the shop's currency on every rail (wallet sales are converted at the time of sale).
+    token: merchant.currency,
     takings: fromBaseUnits(total, token.decimals),
     refunds: { count: refunded?.count ?? 0, total: fromBaseUnits(refundsTotal, token.decimals) },
     netTakings: fromBaseUnits(total - refundsTotal, token.decimals),

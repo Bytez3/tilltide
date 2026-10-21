@@ -29,6 +29,8 @@ export interface MerchantRow {
   paypalMerchantId: string | null
   paypalEmail: string | null
   paypalStatus: 'none' | 'pending' | 'connected'
+  /** Prices, takings and points are in this currency. */
+  currency: 'GBP' | 'USD' | 'EUR'
   createdAt: Date
 }
 
@@ -38,8 +40,14 @@ export interface PaymentRow {
   rail: 'solana' | 'paypal'
   /** Solana Pay reference key. Null for PayPal payments. */
   reference: string | null
-  /** 6-decimal base units on every rail. */
+  /** The price, in `currency`, 6-decimal units, on every rail. */
   amount: bigint
+  /** The shop's currency when the sale was made. */
+  currency: 'GBP' | 'USD' | 'EUR'
+  /** Wallet sales: tokens (USDC/PYUSD) the customer must send, at `fxRate`. Null for PayPal. */
+  tokenAmount: bigint | null
+  /** USD (tokens) per 1 unit of `currency`, × 1,000,000. */
+  fxRate: bigint
   /** 'USD' for PayPal payments. */
   tokenSymbol: 'USDC' | 'PYUSD' | 'USD'
   label: string | null
@@ -95,8 +103,9 @@ export interface RefundRow {
   id: string
   merchantId: string
   paymentId: string
-  /** Ledger units (6 decimals). */
+  /** Ledger units (6 decimals), in `currency`. */
   amount: bigint
+  currency: 'GBP' | 'USD' | 'EUR'
   reason: string | null
   status: RefundStatus
   approvalNonce: string | null

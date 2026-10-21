@@ -100,6 +100,7 @@ async function main() {
       PORT: String(API_PORT),
       POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
       AUTH_DOMAIN: 'tilltide.test',
+      FX_RATES: 'GBP:1.25,EUR:1.10',
       RATE_LIMIT_AUTH: '1000',
       RATE_LIMIT_PER_IP: '100000',
       AGENT_DAILY_LIMIT: '2',
@@ -311,7 +312,9 @@ async function main() {
       const again = await api('POST', '/shop', { name: 'Other name' }, tillToken)
       assert.equal(again.body.id, r.body.id, 'registering again returns the same shop')
       assert.equal(r.body.token, 'PYUSD', 'PayPal first: new shops take PayPal USD by default')
-      const p = await api('PATCH', '/shop', { ownerWallet: owner.address, pointsPerUnit: 1, token: 'USDC' }, tillToken)
+      assert.equal(r.body.currency, 'GBP', 'UK shops price in pounds by default')
+      // Most scenarios below run in USD so token amounts equal prices; the GBP scenario is near the end.
+      const p = await api('PATCH', '/shop', { ownerWallet: owner.address, pointsPerUnit: 1, token: 'USDC', currency: 'USD' }, tillToken)
       assert.equal(p.body.ownerWallet, owner.address)
       assert.equal((await api('PATCH', '/shop', { timezone: 'Mars/Olympus' }, tillToken)).status, 400)
       assert.equal((await api('PATCH', '/shop', { ownerWallet: till.address }, tillToken)).status, 400)
@@ -632,7 +635,7 @@ async function main() {
 
       // Honest: the wallet signs what the server built. 9 points × 0.10 = 0.90 off, pays 1.10.
       const message = await payWithWallet(created.body.url)
-      assert.match(message, /using 9 points \(0.90 off\)\. You pay 1.10 USDC/)
+      assert.match(message, /using 9 points \(0.90 USD off\)\. You pay 1.10 USDC/)
       const paid = await waitFor(tillToken, created.body.id, (p) => p.status === 'paid' && p.pointsIssued, 'redeemed and paid')
       assert.equal(paid.pointsRedeemed, '9')
       assert.equal(paid.discount, '900000')
@@ -993,6 +996,32 @@ async function main() {
       // Earned on the 7.00 actually paid.
       await until('ledger points', async () => (await ledgerBalance(shopId, 'paypal:BUYER1')) === 7n)
       await api('PATCH', '/shop', { pointValue: '0.01' }, tillToken)
+    })
+
+    await step('prices in pounds: wallet sales convert at the day\'s rate; PayPal charges in GBP', async () => {
+      await api('PATCH', '/shop', { currency: 'GBP', token: 'USDC' }, tillToken)
+      // £4.00 at £1 = $1.25 is 5.00 USDC, and the QR asks for exactly that.
+      const sale = await api('POST', '/shop/payments', { amount: '4.00' }, tillToken)
+      assert.equal(sale.status, 201, JSON.stringify(sale.body))
+      assert.equal(sale.body.currency, 'GBP')
+      assert.equal(sale.body.tokenAmount, '5000000')
+      assert.match(sale.body.url, /amount=5&spl-token=/)
+      // Paying the £ figure in tokens (4.00 USDC) is an underpayment.
+      await payFromUrl(sale.body.url, customer, 4_000_000n)
+      await waitFor(tillToken, sale.body.id, (p) => Boolean(p.failureReason), 'short in GBP noted')
+      await payFromUrl(sale.body.url, customer)
+      const paid = await waitFor(tillToken, sale.body.id, (p) => p.status === 'paid' && p.pointsIssued, 'GBP sale paid')
+      assert.equal(paid.points, '4', 'points per £1')
+      const receipt = await fetch(`${API}/r/${sale.body.id}`).then((r) => r.text())
+      assert.match(receipt, /£4.00/)
+      assert.match(receipt, /5.00 USDC/)
+
+      const pp = await api('POST', '/shop/payments', { amount: '6.50', rail: 'paypal' }, tillToken)
+      const orderId = new URL(pp.body.url).searchParams.get('token')!
+      assert.deepEqual(paypal.order(orderId).purchase_units[0].amount, { currency_code: 'GBP', value: '6.50' })
+      assert.equal(paypal.order(orderId).purchase_units[0].payment_instruction.platform_fees[0].amount.currency_code, 'GBP')
+      assert.equal((await api('POST', '/shop/payments', { amount: '4.005' }, tillToken)).status, 400, 'whole pence only')
+      await api('PATCH', '/shop', { currency: 'USD' }, tillToken)
     })
 
     await step('migrations re-run cleanly on a database with every sweep status', async () => {

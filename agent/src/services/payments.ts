@@ -14,6 +14,7 @@ import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { ledgerBalance, payerForCode, planPayPalRedemption } from './paypal-loyalty'
+import { toTokenUnits, usdPerUnit } from '../fx'
 import { paypalPayee } from './paypal-onboarding'
 import { merchantToken } from './merchants'
 
@@ -21,15 +22,19 @@ export async function createPayment(merchant: MerchantRow, amount: bigint, label
   // A fresh keypair's address is a guaranteed-unique reference; the private half is thrown away.
   const reference = (await generateKeyPairSigner()).address
   const token = merchantToken(merchant)
+  // Price in the shop's currency; the customer sends the token equivalent at today's rate.
+  const fxRate = await usdPerUnit(merchant.currency)
+  const tokenAmount = toTokenUnits(amount, fxRate)
   const [payment] = await sql<PaymentRow[]>`
-    insert into payments (merchant_id, reference, amount, token_symbol, label, allow_points)
-    values (${merchant.id}, ${reference}, ${amount.toString()}, ${token.symbol}, ${label ?? null}, ${allowPoints})
+    insert into payments (merchant_id, reference, amount, currency, token_amount, fx_rate, token_symbol, label, allow_points)
+    values (${merchant.id}, ${reference}, ${amount.toString()}, ${merchant.currency}, ${tokenAmount.toString()},
+      ${fxRate.toString()}, ${token.symbol}, ${label ?? null}, ${allowPoints})
     returning *`
   // With points on, the wallet fetches a transaction from us (Solana Pay transaction request) that also burns points.
   if (allowPoints) return { payment: payment!, url: encodeTransactionRequest(`${config.publicUrl}/pay/${payment!.id}`) }
   const url = encodeTransferRequest({
     recipient: address(merchant.wallet),
-    amount,
+    amount: tokenAmount,
     token,
     reference,
     label: merchant.name,
@@ -76,8 +81,8 @@ export async function createPayPalPayment(merchant: MerchantRow, amount: bigint,
         ? (sweepFee(redemption.toPay, config.paypalPlatform.feeBps) / 10_000n) * 10_000n // whole cents
         : 0n
     const [row] = await tx<PaymentRow[]>`
-      insert into payments (merchant_id, rail, amount, token_symbol, label, points_redeemed, discount, loyalty_key, paypal_fee)
-      values (${merchant.id}, 'paypal', ${amount.toString()}, 'USD', ${label ?? null}, ${redemption.points.toString()},
+      insert into payments (merchant_id, rail, amount, currency, token_symbol, label, points_redeemed, discount, loyalty_key, paypal_fee)
+      values (${merchant.id}, 'paypal', ${amount.toString()}, ${merchant.currency}, 'USD', ${label ?? null}, ${redemption.points.toString()},
         ${redemption.discount.toString()}, ${redemption.points > 0n ? loyaltyKey : null}, ${fee.toString()})
       returning *`
     return row!
@@ -88,13 +93,14 @@ export async function createPayPalPayment(merchant: MerchantRow, amount: bigint,
     const order = await paypal.createOrder({
       referenceId: payment.id,
       value: cents(payment.amount - payment.discount),
-      currency: config.paypalCurrency,
+      // PayPal charges in the shop's own currency.
+      currency: payment.currency,
       description: payment.discount > 0n ? `${label ?? 'Sale'} (${payment.pointsRedeemed} points used)` : label,
       brandName: merchant.name,
       returnUrl: `${config.publicUrl}/paypal/return`,
       cancelUrl: `${config.publicUrl}/paypal/cancel`,
       payee,
-      platformFee: payment.paypalFee > 0n ? { value: cents(payment.paypalFee), currency: config.paypalCurrency } : undefined,
+      platformFee: payment.paypalFee > 0n ? { value: cents(payment.paypalFee), currency: payment.currency } : undefined,
     })
     const url = approvalUrl(order)
     if (!url) throw new Error('PayPal did not return an approval link')
@@ -293,6 +299,10 @@ export function serializePayment(p: PaymentRow) {
     reference: p.reference,
     amount: p.amount.toString(),
     decimals: LEDGER_DECIMALS,
+    currency: p.currency,
+    /** Wallet sales: what the customer sends, in `token`. */
+    tokenAmount: p.tokenAmount?.toString() ?? null,
+    fxRate: (Number(p.fxRate) / 1e6).toString(),
     token: p.tokenSymbol,
     label: p.label,
     status: p.status,

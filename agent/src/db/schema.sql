@@ -155,3 +155,12 @@ create table if not exists loyalty_codes (
   created_at timestamptz not null default now(),
   unique (merchant_id, payer_key)
 );
+
+-- Prices in the shop's own currency. Wallet sales store the token amount and rate they were priced at.
+alter table merchants add column if not exists currency text not null default 'GBP';
+alter table merchants drop constraint if exists merchants_currency_check;
+alter table merchants add constraint merchants_currency_check check (currency in ('GBP', 'USD', 'EUR'));
+alter table payments add column if not exists currency text not null default 'USD';
+alter table payments add column if not exists token_amount bigint;
+alter table payments add column if not exists fx_rate bigint not null default 1000000;
+alter table refunds add column if not exists currency text not null default 'USD';

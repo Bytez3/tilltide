@@ -17,6 +17,7 @@ import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
 import { isDate } from './dates'
+import { FxError } from './fx'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, PayPalSaleError, serializePayment } from './services/payments'
@@ -59,6 +60,7 @@ function serializeMerchant(m: MerchantRow) {
     token: m.tokenSymbol,
     pointsPerUnit: Number(m.pointsPerUnit),
     timezone: m.timezone,
+    currency: m.currency,
     cluster: config.cluster,
     pointsMint: config.pointsMint,
     paypalEnabled: Boolean(config.paypal),
@@ -263,6 +265,7 @@ shop.patch('/', async (c) => {
       /** What one point is worth when spent, e.g. "0.01". */
       pointValue: z.string().regex(/^\d+(\.\d{1,6})?$/).optional(),
       redeemMaxPercent: z.number().int().min(0).max(90).optional(),
+      currency: z.enum(['GBP', 'USD', 'EUR']).optional(),
       /** Without PayPal onboarding: the PayPal email PayPal sales are paid to. */
       paypalEmail: z.email().max(254).nullable().optional(),
       timezone: timezone.optional(),
@@ -280,6 +283,7 @@ shop.patch('/', async (c) => {
       point_value = ${input.pointValue !== undefined ? toBaseUnits(input.pointValue, LEDGER_DECIMALS).toString() : merchant.pointValue.toString()},
       redeem_max_percent = ${input.redeemMaxPercent ?? merchant.redeemMaxPercent},
       paypal_email = ${input.paypalEmail === undefined ? merchant.paypalEmail : input.paypalEmail},
+      currency = ${input.currency ?? merchant.currency},
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
@@ -308,9 +312,8 @@ shop.post('/payments', async (c) => {
   }
   let amount: bigint
   try {
-    // Every rail uses 6-decimal ledger units; PayPal additionally needs whole cents.
-    amount = toBaseUnits(input.amount, input.rail === 'paypal' ? 2 : merchantToken(merchant).decimals)
-    if (input.rail === 'paypal') amount *= 10n ** BigInt(LEDGER_DECIMALS - 2)
+    // Prices are in the shop's currency, in whole pence/cents on every rail.
+    amount = toBaseUnits(input.amount, 2) * 10n ** BigInt(LEDGER_DECIMALS - 2)
   } catch (err) {
     throw new HTTPException(400, { message: (err as Error).message })
   }
@@ -326,8 +329,13 @@ shop.post('/payments', async (c) => {
       throw new HTTPException(502, { message: `PayPal: ${(err as Error).message}` })
     }
   }
-  const { payment, url } = await createPayment(merchant, amount, input.label, input.usePoints)
-  return c.json({ ...serializePayment(payment), url }, 201)
+  try {
+    const { payment, url } = await createPayment(merchant, amount, input.label, input.usePoints)
+    return c.json({ ...serializePayment(payment), url }, 201)
+  } catch (err) {
+    if (err instanceof FxError) throw new HTTPException(503, { message: err.message })
+    throw err
+  }
 })
 
 shop.get('/payments', async (c) => {

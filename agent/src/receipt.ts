@@ -68,7 +68,7 @@ export async function renderReceipt(paymentId: string) {
   <div class="card">
     <h1>${payment.shopName}</h1>
     <div class="muted">${when}</div>
-    <div class="amount">${amount} ${payment.rail === 'paypal' ? 'USD' : payment.tokenSymbol}</div>
+    <div class="amount">${({ GBP: '£', USD: '$', EUR: '€' } as const)[payment.currency]}${amount}</div>
     <div class="paid">Paid ✓${payment.rail === 'paypal' ? ' with PayPal' : ''}</div>
   </div>
   ${
@@ -78,12 +78,13 @@ export async function renderReceipt(paymentId: string) {
     ${
       payment.discount > 0n && payment.rail === 'solana'
         ? html`<div class="row"><span class="muted">Points used</span><span>${payment.pointsRedeemed.toString()} (−${Number(fromBaseUnits(payment.discount, LEDGER_DECIMALS)).toFixed(2)})</span></div>
-    <div class="row"><span class="muted">You paid</span><span>${Number(fromBaseUnits(payment.amount - payment.discount, LEDGER_DECIMALS)).toFixed(2)} ${payment.tokenSymbol}</span></div>`
+    <div class="row"><span class="muted">You paid</span><span>${Number(fromBaseUnits(payment.amount - payment.discount, LEDGER_DECIMALS)).toFixed(2)} ${payment.currency}</span></div>`
         : ''
     }
     ${isSolana ? html`<div class="row"><span class="muted">Paid from</span><span>${short(payment.payer!)}</span></div>` : ''}
+    ${isSolana && payment.tokenAmount && payment.discount === 0n ? html`<div class="row"><span class="muted">Sent</span><span>${Number(fromBaseUnits(payment.tokenAmount, LEDGER_DECIMALS)).toFixed(2)} ${payment.tokenSymbol}</span></div>` : ''}
     ${payment.discount > 0n && payment.rail === 'paypal' ? html`<div class="row"><span class="muted">Points used</span><span>${payment.pointsRedeemed.toString()} (−${Number(fromBaseUnits(payment.discount, LEDGER_DECIMALS)).toFixed(2)})</span></div>` : ''}
-    ${refunded?.total ? html`<div class="row"><span class="muted">Refunded</span><span>${Number(fromBaseUnits(refunded.total, LEDGER_DECIMALS)).toFixed(2)} USD</span></div>` : ''}
+    ${refunded?.total ? html`<div class="row"><span class="muted">Refunded</span><span>${Number(fromBaseUnits(refunded.total, LEDGER_DECIMALS)).toFixed(2)} ${payment.currency}</span></div>` : ''}
     ${payment.signature ? html`<div class="row"><span class="muted">Transaction</span><a href="${explorer(payment.signature)}" rel="noopener">${short(payment.signature)}</a></div>` : ''}
   </div>`
       : ''

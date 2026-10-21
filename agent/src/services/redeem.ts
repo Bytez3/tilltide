@@ -14,6 +14,7 @@ import { findSignaturesByReference, fromBaseUnits, getRedeemPaymentInstructions,
 import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
 import { rpc } from '../solana'
+import { fromTokenUnits, toTokenUnits } from '../fx'
 
 export class RedeemError extends Error {}
 
@@ -44,16 +45,18 @@ export async function buildRedeemTransaction(paymentId: string, account: string)
   const [merchant] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
   const customer = address(account)
   const token = config.tokens[payment.tokenSymbol as 'USDC' | 'PYUSD']
+  // The discount is worked out in the shop's currency; only the rest is converted to tokens.
   const plan = planRedemption(payment.amount, await pointsBalance(customer), {
     pointValue: merchant!.pointValue,
     maxPercent: merchant!.redeemMaxPercent,
   })
+  const toPayTokens = toTokenUnits(plan.toPay, payment.fxRate)
 
   const instructions = await getRedeemPaymentInstructions({
     customer,
     recipient: address(merchant!.wallet),
     token,
-    toPay: plan.toPay,
+    toPay: toPayTokens,
     pointsMint: config.pointsMint,
     points: plan.points,
     reference: address(payment.reference),
@@ -66,12 +69,12 @@ export async function buildRedeemTransaction(paymentId: string, account: string)
     (m) => setTransactionMessageLifetimeUsingBlockhash(blockhash, m),
     (m) => appendTransactionMessageInstructions(instructions, m),
   )
-  const price = Number(fromBaseUnits(plan.toPay, token.decimals)).toFixed(2)
+  const price = Number(fromBaseUnits(toPayTokens, token.decimals)).toFixed(2)
   return {
     transaction: getBase64EncodedWireTransaction(compileTransaction(message)),
     message:
       plan.points > 0n
-        ? `${merchant!.name}: using ${plan.points} points (${Number(fromBaseUnits(plan.discount, token.decimals)).toFixed(2)} off). You pay ${price} ${token.symbol}.`
+        ? `${merchant!.name}: using ${plan.points} points (${Number(fromBaseUnits(plan.discount, LEDGER_DECIMALS)).toFixed(2)} ${payment.currency} off). You pay ${price} ${token.symbol}.`
         : `${merchant!.name}: ${price} ${token.symbol}`,
   }
 }
@@ -94,11 +97,13 @@ export async function findRedeemPayment(payment: PaymentRow, merchant: MerchantR
     }
     const burned = config.pointsMint ? -(result.payerDeltas[config.pointsMint] ?? 0n) : 0n
     const discount = (burned > 0n ? burned : 0n) * merchant.pointValue
+    // Tokens received, converted back at the rate the sale was priced at.
+    const receivedInCurrency = fromTokenUnits(result.received, payment.fxRate)
     const reason =
       discount > cap
-        ? `Points covered ${fromBaseUnits(discount, LEDGER_DECIMALS)}, more than the ${merchant.redeemMaxPercent}% allowed`
-        : result.received + discount < payment.amount
-          ? `Received ${fromBaseUnits(result.received, token.decimals)} + ${burned} points, short of ${fromBaseUnits(payment.amount, token.decimals)}`
+        ? `Points covered ${fromBaseUnits(discount, LEDGER_DECIMALS)} ${payment.currency}, more than the ${merchant.redeemMaxPercent}% allowed`
+        : receivedInCurrency + discount < payment.amount
+          ? `Received ${fromBaseUnits(result.received, token.decimals)} ${token.symbol} + ${burned} points, short of ${fromBaseUnits(payment.amount, LEDGER_DECIMALS)} ${payment.currency}`
           : null
     if (!reason) return { status: 'paid' as const, payment: result, pointsRedeemed: burned > 0n ? burned : 0n, discount }
     rejected.add(signature)

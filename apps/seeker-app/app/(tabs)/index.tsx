@@ -7,7 +7,7 @@ import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Rail } from '@/lib/api'
-import { formatAmount } from '@/lib/format'
+import { currencySymbol, formatAmount, formatMoney } from '@/lib/format'
 import { AppConfig } from '@/constants/app-config'
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
@@ -108,10 +108,13 @@ export default function ChargeScreen() {
   }
 
   if (payment) {
-    const display = formatAmount(payment.amount, payment.decimals, payment.token)
+    const display = formatMoney(payment.amount, payment.decimals, payment.currency)
     return (
       <ScrollView style={ui.screen} contentContainerStyle={[ui.content, { alignItems: 'center' }]}>
         <Text style={[ui.h1, { fontSize: 40 }]}>{display}</Text>
+        {payment.rail === 'solana' && payment.tokenAmount && payment.status === 'pending' && !payment.allowPoints && payment.currency !== 'USD' && (
+          <Text style={ui.muted}>= {formatAmount(payment.tokenAmount, payment.decimals, payment.token)} at today&apos;s rate</Text>
+        )}
         {payment.status === 'pending' && (
           <>
             <View style={[ui.card, { padding: 20 }]}>
@@ -154,7 +157,7 @@ export default function ChargeScreen() {
             {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
             {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
               <Text style={ui.body}>
-                Used {payment.pointsRedeemed} points ({formatAmount(payment.discount, payment.decimals, payment.token)} off)
+                Used {payment.pointsRedeemed} points ({formatMoney(payment.discount, payment.decimals, payment.currency)} off)
               </Text>
             )}
             <View style={{ marginTop: 16, alignItems: 'center', gap: 6 }}>
@@ -197,7 +200,7 @@ export default function ChargeScreen() {
   const valid = Number(amount) > 0
   // Without PayPal on the server the till falls back to wallet payments.
   const activeRail: Rail = merchant.paypalEnabled ? rail : 'solana'
-  const currency = activeRail === 'paypal' ? 'USD' : merchant.token
+  const currency = merchant.currency
   const paypalNotConnected = activeRail === 'paypal' && merchant.paypal.required && merchant.paypal.status !== 'connected' && !merchant.paypal.email
   return (
     <View style={[ui.screen, ui.content]}>
@@ -256,8 +259,10 @@ export default function ChargeScreen() {
         </Pressable>
       )}
       <Text style={[ui.h1, { fontSize: 52, textAlign: 'center', marginVertical: 16 }]}>
-        {amount || '0'} <Text style={{ fontSize: 22, color: colors.muted }}>{currency}</Text>
+        {currencySymbol(currency)}
+        {amount || '0'}
       </Text>
+      {activeRail === 'solana' && <Text style={[ui.muted, { textAlign: 'center' }]}>Paid in {merchant.token} at today&apos;s rate</Text>}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
         {KEYS.map((key) => (
           <Pressable
@@ -274,7 +279,7 @@ export default function ChargeScreen() {
         ))}
       </View>
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
-      <Button title={valid ? `Charge ${amount} ${currency}` : 'Enter an amount'} onPress={charge} disabled={!valid || paypalNotConnected} loading={creating} />
+      <Button title={valid ? `Charge ${currencySymbol(currency)}${amount}` : 'Enter an amount'} onPress={charge} disabled={!valid || paypalNotConnected} loading={creating} />
     </View>
   )
 }

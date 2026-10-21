@@ -39,7 +39,8 @@ export async function checkPayment(payment: PaymentRow, merchant: MerchantRow): 
   const found = await findPayment(
     rpc,
     address(payment.reference),
-    { recipient: address(merchant.wallet), token: config.tokens[payment.tokenSymbol], amount: payment.amount },
+    // The customer sends the token amount fixed when the sale was priced (old sales: amount, 1:1 USD).
+    { recipient: address(merchant.wallet), token: config.tokens[payment.tokenSymbol], amount: payment.tokenAmount ?? payment.amount },
     rejected,
   )
   if (found.status === 'mismatch') {

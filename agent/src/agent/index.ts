@@ -15,7 +15,7 @@ import { proposeSweep, serializeSweep } from '../services/sweeps'
 const client = new Anthropic()
 
 const SYSTEM_PROMPT = `You are Tilltide, the back-office assistant for a small independent shop.
-The shop takes payments PayPal-first: PayPal checkout (PayPal or card) at the till, and PayPal's stablecoin PYUSD (or USDC) on Solana into its till wallet. Both are in one ledger, in US dollars 1:1.
+The shop takes payments PayPal-first: PayPal checkout (PayPal or card) at the till, and PayPal's stablecoin PYUSD (or USDC) on Solana into its till wallet. Everything is priced and reported in the shop's own currency (see context); wallet sales are converted from it at the day's exchange rate.
 The person you're talking to is the shop owner, usually on their phone between customers. Answer in plain British English, short enough to read at a glance. Lead with the number they asked for.
 
 You can look up payments, build daily summaries and reconcile the till against the chain. Use the tools; never guess a figure.
@@ -115,7 +115,7 @@ export function buildTools(merchant: MerchantRow, proposed: SweepRow[], proposed
         'Propose refunding a paid PayPal payment, in full or in part, through PayPal. Creates a proposal the owner must approve by signing with their wallet; it does not refund anything itself.',
       inputSchema: z.object({
         payment_id: z.string().uuid(),
-        amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional().describe('USD amount to refund, e.g. "3.50". Omit to refund what is left.'),
+        amount: z.string().regex(/^\d+(\.\d{1,2})?$/).optional().describe('Amount to refund in the shop currency, e.g. "3.50". Omit to refund what is left.'),
         reason: z.string().max(200).describe('One line shown to the owner and sent to the customer by PayPal'),
       }),
       run: async ({ payment_id, amount, reason }) => {
@@ -137,7 +137,7 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
   const proposedRefunds: RefundRow[] = []
   const tools = buildTools(merchant, proposed, proposedRefunds)
 
-  const context = `Shop: ${merchant.name}. Timezone ${merchant.timezone}; today is ${todayIn(merchant.timezone)}. Payment token ${token.symbol}. Points rate ${merchant.pointsPerUnit} per 1 ${token.symbol}. Owner wallet ${merchant.ownerWallet ? 'is set' : 'is NOT set'}.`
+  const context = `Shop: ${merchant.name}. Currency ${merchant.currency}. Timezone ${merchant.timezone}; today is ${todayIn(merchant.timezone)}. Wallet payment token ${token.symbol}. Points rate ${merchant.pointsPerUnit} per 1 ${token.symbol}. Owner wallet ${merchant.ownerWallet ? 'is set' : 'is NOT set'}.`
 
   const model = config.agent.model
   // Adaptive thinking, effort and server-side fallbacks exist on the current Opus/Sonnet/Fable models;
