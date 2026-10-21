@@ -3,8 +3,9 @@ import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'r
 import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
 import { GettingStarted } from '@/components/getting-started'
+import { PaidTick } from '@/components/paid-tick'
 import { SetupCard } from '@/components/setup-card'
-import { Button, Input } from '@/components/ui'
+import { Button, Chip, Input } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Rail } from '@/lib/api'
@@ -19,6 +20,7 @@ export default function ChargeScreen() {
   // PayPal first: most customers have PayPal or a card; wallets are the second option.
   const [rail, setRail] = useState<Rail>('paypal')
   const [loyaltyCode, setLoyaltyCode] = useState('')
+  const [showLoyalty, setShowLoyalty] = useState(false)
   const [usePoints, setUsePoints] = useState(false)
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
@@ -106,6 +108,45 @@ export default function ChargeScreen() {
     setPayment(null)
     setAmount('')
     setLoyaltyCode('')
+    setShowLoyalty(false)
+  }
+
+  if (payment?.status === 'paid') {
+    const display = formatMoney(payment.amount, payment.decimals, payment.currency)
+    const receiptUrl = `${AppConfig.apiUrl}/r/${payment.id}`
+    return (
+      <ScrollView style={[ui.screen, { backgroundColor: colors.paidBg }]} contentContainerStyle={[ui.content, { alignItems: 'center', paddingTop: 32 }]}>
+        <PaidTick />
+        <Text style={[ui.h1, { fontSize: 44, color: colors.paid, marginTop: 8 }]}>Paid</Text>
+        <Text style={[ui.h1, { fontSize: 32 }]}>{display}</Text>
+        <Text style={ui.muted}>{payment.rail === 'paypal' ? 'with PayPal' : `in ${payment.token} from a wallet`}</Text>
+        {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
+          <Text style={ui.body}>
+            Used {payment.pointsRedeemed} points ({formatMoney(payment.discount, payment.decimals, payment.currency)} off)
+          </Text>
+        )}
+        {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
+          <Text style={ui.body}>
+            {payment.pointsIssued
+              ? `${payment.points} points sent to the customer${payment.seekerBonus ? ' (Seeker bonus)' : ''}`
+              : `${payment.points} points on their way to the customer`}
+          </Text>
+        )}
+        <View style={[ui.card, ui.row, { alignSelf: 'stretch', marginTop: 16, gap: 16 }]}>
+          <QRCode value={receiptUrl} size={96} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={ui.h2}>Receipt and points</Text>
+            <Text style={ui.muted}>Customer scans this with their phone camera.</Text>
+            {AppConfig.sandbox && (
+              <Text style={{ color: colors.sea, fontWeight: '600' }} onPress={() => Linking.openURL(receiptUrl)}>
+                Open receipt
+              </Text>
+            )}
+          </View>
+        </View>
+        <Button title="New sale" onPress={reset} style={{ alignSelf: 'stretch' }} />
+      </ScrollView>
+    )
   }
 
   if (payment) {
@@ -150,34 +191,6 @@ export default function ChargeScreen() {
               </Text>
             </View>
           </>
-        )}
-        {payment.status === 'paid' && (
-          <View style={[ui.card, { alignItems: 'center', alignSelf: 'stretch', paddingVertical: 32 }]}>
-            <Text style={{ fontSize: 56, color: colors.paid }}>✓</Text>
-            <Text style={[ui.h1, { color: colors.paid }]}>Paid</Text>
-            {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
-            {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
-              <Text style={ui.body}>
-                Used {payment.pointsRedeemed} points ({formatMoney(payment.discount, payment.decimals, payment.currency)} off)
-              </Text>
-            )}
-            <View style={{ marginTop: 16, alignItems: 'center', gap: 6 }}>
-              <QRCode value={`${AppConfig.apiUrl}/r/${payment.id}`} size={120} />
-              <Text style={ui.muted}>Customer: scan for your receipt and points</Text>
-              {AppConfig.sandbox && (
-                <Text style={{ color: colors.sea, fontWeight: '600' }} onPress={() => Linking.openURL(`${AppConfig.apiUrl}/r/${payment.id}`)}>
-                  Open receipt
-                </Text>
-              )}
-            </View>
-            {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
-              <Text style={ui.body}>
-                {payment.pointsIssued
-                  ? `${payment.points} points sent to the customer${payment.seekerBonus ? ' (Seeker bonus)' : ''}`
-                  : `${payment.points} points will be sent to the customer`}
-              </Text>
-            )}
-          </View>
         )}
         {(payment.status === 'failed' || payment.status === 'expired') && (
           <View style={[ui.card, { alignSelf: 'stretch' }]}>
@@ -226,46 +239,45 @@ export default function ChargeScreen() {
           </View>
         )}
       </View>
-      {activeRail === 'paypal' && (
-        <Input
-          placeholder="Loyalty code (optional)"
-          autoCapitalize="characters"
-          autoCorrect={false}
-          value={loyaltyCode}
-          onChangeText={setLoyaltyCode}
-          maxLength={11}
-        />
-      )}
       {paypalNotConnected && (
         <Text style={[ui.muted, { color: colors.warn }]}>
           {isStaff ? 'PayPal is not set up yet. Ask the owner to connect PayPal, or take a wallet payment.' : 'Connect your PayPal in Settings to take PayPal payments.'}
         </Text>
       )}
-      {activeRail === 'solana' && merchant.pointsMint && (
-        <Pressable
-          accessibilityRole="switch"
-          accessibilityState={{ checked: usePoints }}
-          onPress={() => setUsePoints((v) => !v)}
-          style={[ui.row, { alignSelf: 'flex-start' }]}
-        >
-          <View
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 6,
-              borderWidth: 2,
-              borderColor: colors.sea,
-              backgroundColor: usePoints ? colors.sea : 'transparent',
-            }}
-          />
-          <Text style={ui.body}>Let the customer use their points (up to {merchant.redeemMaxPercent}% off)</Text>
-        </Pressable>
-      )}
-      <Text style={[ui.h1, { fontSize: 52, textAlign: 'center', marginVertical: 16 }]}>
+      <Text
+        style={[ui.h1, { fontSize: 60, textAlign: 'center', marginTop: 12, letterSpacing: -1 }, !amount && { color: colors.placeholder }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
         {currencySymbol(currency)}
-        {amount || '0'}
+        {amount || '0.00'}
       </Text>
-      {activeRail === 'solana' && <Text style={[ui.muted, { textAlign: 'center' }]}>Paid in {merchant.token} at today&apos;s rate</Text>}
+      <View style={{ alignItems: 'center', minHeight: 40, justifyContent: 'center', gap: 6 }}>
+        {activeRail === 'paypal' &&
+          (showLoyalty || loyaltyCode ? (
+            <Input
+              placeholder="Code from their receipt"
+              autoFocus={!loyaltyCode}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              value={loyaltyCode}
+              onChangeText={setLoyaltyCode}
+              onBlur={() => !loyaltyCode && setShowLoyalty(false)}
+              maxLength={11}
+              style={{ width: 240, textAlign: 'center', letterSpacing: 1, paddingVertical: 8 }}
+            />
+          ) : (
+            <Chip label="+ Loyalty code" onPress={() => setShowLoyalty(true)} />
+          ))}
+        {activeRail === 'solana' && <Text style={ui.muted}>Paid in {merchant.token} at today&apos;s rate</Text>}
+        {activeRail === 'solana' && merchant.pointsMint && (
+          <Chip
+            label={usePoints ? `✓ Customer can use points (up to ${merchant.redeemMaxPercent}% off)` : '+ Let them use points'}
+            selected={usePoints}
+            onPress={() => setUsePoints((v) => !v)}
+          />
+        )}
+      </View>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
         {KEYS.map((key) => (
           <Pressable
@@ -274,10 +286,10 @@ export default function ChargeScreen() {
             accessibilityLabel={key === '⌫' ? 'Delete' : key}
             style={({ pressed }) => [
               ui.card,
-              { width: '31%', alignItems: 'center', paddingVertical: 18, opacity: pressed ? 0.6 : 1 },
+              { width: '31.5%', alignItems: 'center', paddingVertical: 16, borderRadius: 16, backgroundColor: pressed ? colors.line : colors.card },
             ]}
           >
-            <Text style={{ fontSize: 26, color: colors.ink }}>{key}</Text>
+            <Text style={{ fontSize: 28, fontWeight: '500', color: colors.ink }}>{key}</Text>
           </Pressable>
         ))}
       </View>

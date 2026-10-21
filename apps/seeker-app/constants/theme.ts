@@ -9,7 +9,9 @@ export const colors = {
   line: '#E2DDD4',
   sea: '#0E6E6B',
   seaInk: '#FFFFFF',
+  seaLight: '#7FC4BC',
   paid: '#1F8A4C',
+  paidBg: '#E6F2EA',
   warn: '#B4561C',
   danger: '#B42318',
 }

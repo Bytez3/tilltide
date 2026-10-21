@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FlatList, Linking, Pressable, RefreshControl, Text, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
@@ -41,6 +41,18 @@ export default function ActivityScreen() {
     enabled: !!merchant && !isStaff,
   })
   const [reportBusy, setReportBusy] = useState(false)
+
+  // Finished approvals clear themselves after a few seconds; anything that needs checking stays.
+  useEffect(() => {
+    if (sweep?.status !== 'confirmed' && sweep?.status !== 'cancelled') return
+    const timer = setTimeout(() => setSweep(null), 6000)
+    return () => clearTimeout(timer)
+  }, [sweep?.status])
+  useEffect(() => {
+    if (refund?.status !== 'completed' && refund?.status !== 'cancelled') return
+    const timer = setTimeout(() => setRefund(null), 6000)
+    return () => clearTimeout(timer)
+  }, [refund?.status])
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
   if (!merchant) {
@@ -121,9 +133,13 @@ export default function ActivityScreen() {
       refreshControl={<RefreshControl refreshing={payments.isFetching} onRefresh={refresh} />}
       ListHeaderComponent={
         <View style={{ gap: 12 }}>
+          {/* Anything waiting on the owner comes first. */}
+          {sweep && <SweepCard sweep={sweep} onChange={(next) => (setSweep(next), refresh())} />}
+          {refund && <RefundCard refund={refund} onChange={(next) => (setRefund(next), refresh())} />}
+          {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
           <View style={ui.card}>
             <Text style={ui.muted}>Today</Text>
-            <Text style={ui.h1}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
+            <Text style={[ui.h1, { fontSize: 40, letterSpacing: -0.5 }]}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
             {s && (
               <Text style={ui.muted}>
                 {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
@@ -135,12 +151,8 @@ export default function ActivityScreen() {
                 {Number(s.netTakings).toFixed(2)}
               </Text>
             )}
-            {s && Number(s.byRail.paypal) > 0 && (
-              <Text style={ui.muted}>
-                PayPal {currencySymbol(s.token)}
-                {Number(s.byRail.paypal).toFixed(2)} · Wallet {currencySymbol(s.token)}
-                {Number(s.byRail.solana).toFixed(2)}
-              </Text>
+            {s && Number(s.takings) > 0 && (
+              <RailSplit paypal={Number(s.byRail.paypal)} wallet={Number(s.byRail.solana)} symbol={currencySymbol(s.token)} />
             )}
             {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
             {sweepAmount !== null && (
@@ -156,10 +168,11 @@ export default function ActivityScreen() {
           </View>
           {!isStaff && (
             <View style={ui.card}>
-              <Text style={ui.muted}>End of day{merchant.closeTime ? ` (written at ${merchant.closeTime})` : ''}</Text>
+              <Text style={ui.h2}>End of day</Text>
+              <Text style={ui.muted}>Written automatically{merchant.closeTime ? ` at ${merchant.closeTime}` : ' at closing time'}</Text>
               {reports.data?.[0] ? (
                 <>
-                  <Text style={ui.muted}>{formatDay(reports.data[0].date)}</Text>
+                  {reports.data[0].date !== summary.data?.summary.date && <Text style={ui.muted}>{formatDay(reports.data[0].date)}</Text>}
                   {reports.data[0].narrative && <Text style={ui.body}>{reports.data[0].narrative}</Text>}
                   <Text style={reports.data[0].narrative ? ui.muted : ui.body}>{reports.data[0].text}</Text>
                 </>
@@ -172,11 +185,10 @@ export default function ActivityScreen() {
               </View>
             </View>
           )}
-          {sweep && <SweepCard sweep={sweep} onChange={(next) => (setSweep(next), refresh())} />}
-          {refund && <RefundCard refund={refund} onChange={(next) => (setRefund(next), refresh())} />}
-          {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
+          {(payments.data?.length ?? 0) > 0 && <Text style={[ui.h2, { marginTop: 8 }]}>Sales</Text>}
         </View>
       }
+      ListFooterComponent={<View style={{ height: 8 }} />}
       ListEmptyComponent={<Text style={ui.muted}>No sales yet. Take one from the Charge tab.</Text>}
       renderItem={({ item }) => (
         <View style={[ui.card, ui.row, { justifyContent: 'space-between' }]}>
@@ -199,5 +211,32 @@ export default function ActivityScreen() {
         </View>
       )}
     />
+  )
+}
+
+/** Today's takings split by how customers paid, as a two-tone bar with a legend. */
+function RailSplit({ paypal, wallet, symbol }: { paypal: number; wallet: number; symbol: string }) {
+  const total = paypal + wallet
+  if (total <= 0) return null
+  return (
+    <View style={{ gap: 6, marginTop: 4 }}>
+      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.line }}>
+        <View style={{ flex: paypal, backgroundColor: colors.sea }} />
+        <View style={{ flex: wallet, backgroundColor: colors.seaLight }} />
+      </View>
+      <View style={[ui.row, { justifyContent: 'space-between' }]}>
+        <Legend colour={colors.sea} label={`PayPal ${symbol}${paypal.toFixed(2)}`} />
+        <Legend colour={colors.seaLight} label={`Wallet ${symbol}${wallet.toFixed(2)}`} />
+      </View>
+    </View>
+  )
+}
+
+function Legend({ colour, label }: { colour: string; label: string }) {
+  return (
+    <View style={[ui.row, { gap: 6 }]}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colour }} />
+      <Text style={ui.muted}>{label}</Text>
+    </View>
   )
 }

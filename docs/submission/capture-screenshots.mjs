@@ -59,7 +59,8 @@ await shot('06-paid-wallet-seeker-bonus')
 // Next visit: PayPal sale spending points with the loyalty code.
 await tap('New sale')
 await tap('PayPal')
-await page.getByPlaceholder('Loyalty code (optional)').fill(code)
+await tap('+ Loyalty code')
+await page.getByPlaceholder('Code from their receipt').fill(code)
 await keys('8.00')
 await tap('Charge £8.00')
 await tap('Customer approves in PayPal')
@@ -81,6 +82,7 @@ await tap('Approve with wallet')
 await page.getByText('Refunded ✓').waitFor({ timeout: 30000 })
 await tap('Write report')
 await page.getByText('Average sale', { exact: false }).first().waitFor({ timeout: 30000 })
+await page.waitForTimeout(6500) // finished approval cards clear themselves
 await page.evaluate(() => window.scrollTo(0, 0))
 await shot('11-activity-end-of-day')
 

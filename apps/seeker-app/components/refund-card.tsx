@@ -59,7 +59,7 @@ export function RefundCard({
       <Text style={ui.h1}>
         {currencySymbol(refund.currency)}{refund.display}
       </Text>
-      {refund.reason && <Text style={ui.muted}>{refund.reason}</Text>}
+      {refund.reason && refund.reason !== 'Refund' && <Text style={ui.muted}>{refund.reason}</Text>}
       {refund.error && <Text style={[ui.muted, { color: colors.warn }]}>{refund.error}</Text>}
       {refund.status === 'proposed' || refund.status === 'processing' ? (
         <View style={ui.row}>

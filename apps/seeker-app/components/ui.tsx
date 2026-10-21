@@ -49,3 +49,25 @@ export function Button({
     </Pressable>
   )
 }
+
+/** A small rounded toggle or action, for optional extras under the main control. */
+export function Chip({ label, onPress, selected }: { label: string; onPress: () => void; selected?: boolean }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!selected }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        borderRadius: 999,
+        borderWidth: 1,
+        borderColor: selected ? colors.sea : colors.line,
+        backgroundColor: selected ? colors.sea : colors.card,
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        opacity: pressed ? 0.8 : 1,
+      })}
+    >
+      <Text style={{ color: selected ? colors.seaInk : colors.sea, fontWeight: '600', fontSize: 14 }}>{label}</Text>
+    </Pressable>
+  )
+}
