@@ -8,28 +8,33 @@ import { z } from 'zod'
 import { runAgent } from './agent'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
+import { isDate } from './dates'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
 import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
-import { getSweep, serializeSweep, settleSweep, submitSweep, SweepError } from './services/sweeps'
+import { beginSweep, getSweep, serializeSweep, settleSweep, submitSweep, SweepError } from './services/sweeps'
 import { checkPayment } from './services/watcher'
 import { rpc } from './solana'
 
 const wallet = z.string().refine(isAddress, 'Not a Solana address')
-const timezone = z.string().refine((tz) => {
-  try {
-    new Intl.DateTimeFormat('en', { timeZone: tz })
-    return true
-  } catch {
-    return false
-  }
-}, 'Unknown timezone')
+// IANA names only (e.g. Europe/London). Offsets like "+01:00" mean different things to Intl and Postgres.
+const timezone = z
+  .string()
+  .regex(/^[A-Za-z]+(\/[A-Za-z0-9_-]+)+$|^UTC$/, 'Use a timezone name like Europe/London')
+  .refine((tz) => {
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: tz })
+      return true
+    } catch {
+      return false
+    }
+  }, 'Unknown timezone')
+  .refine(async (tz) => (await sql`select 1 from pg_timezone_names where name = ${tz}`).length > 0, 'Unknown timezone')
 const isUuid = (id: string) => z.uuid().safeParse(id).success
-const isDate = (d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T00:00:00Z`))
 
 async function body<T extends z.ZodType>(c: { req: { json(): Promise<unknown> } }, schema: T): Promise<z.infer<T>> {
-  const parsed = schema.safeParse(await c.req.json().catch(() => ({})))
+  const parsed = await schema.safeParseAsync(await c.req.json().catch(() => ({})))
   if (!parsed.success) throw new HTTPException(400, { message: z.prettifyError(parsed.error) })
   return parsed.data
 }
@@ -295,6 +300,18 @@ async function mySweep(c: { get(key: 'wallet'): string; req: { param(name: 'id')
 shop.post('/sweeps/:id/check', async (c) => {
   const { merchant, sweep } = await mySweep(c)
   return c.json(serializeSweep(await settleSweep(merchant, sweep)))
+})
+
+/** The app calls this right before opening the wallet, with the blockhash's last valid block height. */
+shop.post('/sweeps/:id/begin', async (c) => {
+  const { merchant, sweep } = await mySweep(c)
+  const input = await body(c, z.object({ lastValidBlockHeight: z.string().regex(/^\d{1,20}$/) }))
+  try {
+    return c.json(serializeSweep(await beginSweep(merchant, sweep.id, BigInt(input.lastValidBlockHeight))))
+  } catch (err) {
+    if (err instanceof SweepError) throw new HTTPException(409, { message: err.message })
+    throw err
+  }
 })
 
 /** The app calls this as soon as the wallet has signed and sent the sweep. */

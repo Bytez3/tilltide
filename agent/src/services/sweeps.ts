@@ -32,8 +32,8 @@ export async function proposeSweep(merchant: MerchantRow, amount: bigint, reason
   if (merchant.ownerWallet === merchant.wallet) throw new SweepError('Owner wallet is the same as the till wallet')
   if (amount <= 0n) throw new SweepError('Sweep amount must be more than zero')
   const token = merchantToken(merchant)
-  const [inFlight] = await sql`select 1 from sweeps where merchant_id = ${merchant.id} and status = 'submitted'`
-  if (inFlight) throw new SweepError('A sweep is still confirming. Wait for it before proposing another.')
+  const [inFlight] = await sql`select 1 from sweeps where merchant_id = ${merchant.id} and status in ('signing', 'submitted')`
+  if (inFlight) throw new SweepError('A sweep is still being signed or confirmed. Wait for it before proposing another.')
   const balance = await tillBalance(merchant)
   if (amount > balance) throw new SweepError(`The till only holds ${fromBaseUnits(balance, token.decimals)} ${token.symbol}`)
 
@@ -77,6 +77,27 @@ async function checkSweepTransaction(merchant: MerchantRow, sweep: SweepRow, sig
 }
 
 /**
+ * Called just before the app opens the wallet. Locks the sweep until the transaction's blockhash
+ * expires, so it can't be signed twice even if the app loses track of what the wallet did.
+ */
+export async function beginSweep(merchant: MerchantRow, id: string, lastValidBlockHeight: bigint): Promise<SweepRow> {
+  const existing = await getSweep(merchant, id)
+  if (!existing) throw new SweepError('Sweep not found')
+  const current = await settleSweep(merchant, existing)
+  if (current.status === 'signing') throw new SweepError('This sweep is already open in the wallet. Try again in a minute.')
+  if (current.status !== 'proposed' && current.status !== 'cancelled') throw new SweepError(`Sweep is already ${current.status}`)
+  const height = await rpc.getBlockHeight({ commitment: 'confirmed' }).send()
+  if (lastValidBlockHeight < height || lastValidBlockHeight > height + 400n) {
+    throw new SweepError('Blockhash is stale or invalid; refresh and try again')
+  }
+  const [row] = await sql<SweepRow[]>`
+    update sweeps set status = 'signing', signing_valid_until = ${lastValidBlockHeight.toString()}, error = null
+    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled') returning *`
+  if (!row) throw new SweepError('Sweep changed meanwhile; try again')
+  return row
+}
+
+/**
  * The app reports the signature straight after the wallet signs and sends. From here the sweep is
  * 'submitted' and can't be signed again until the chain shows this transaction can't land.
  * A cancelled sweep is accepted too: the owner may have signed it just as a new proposal replaced it.
@@ -86,7 +107,7 @@ export async function submitSweep(merchant: MerchantRow, id: string, signature: 
   if (usedElsewhere) throw new SweepError('That transaction already belongs to another sweep')
   const [row] = await sql<SweepRow[]>`
     update sweeps set status = 'submitted', signature = ${signature}, submitted_at = now(), error = null
-    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled') returning *`
+    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'signing', 'cancelled') returning *`
   if (!row) {
     const existing = await getSweep(merchant, id)
     if (!existing) throw new SweepError('Sweep not found')
@@ -122,7 +143,7 @@ export async function settleSweep(merchant: MerchantRow, sweep: SweepRow): Promi
     return sweep
   }
 
-  if (sweep.status === 'proposed' || sweep.status === 'cancelled') {
+  if (sweep.status === 'proposed' || sweep.status === 'cancelled' || sweep.status === 'signing') {
     const token = config.tokens[sweep.tokenSymbol]
     const [till] = await findAssociatedTokenPda({ owner: address(merchant.wallet), mint: token.mint, tokenProgram: token.tokenProgram })
     const since = BigInt(Math.floor(sweep.createdAt.getTime() / 1000) - 60)
@@ -133,14 +154,26 @@ export async function settleSweep(merchant: MerchantRow, sweep: SweepRow): Promi
       if (!s.memo?.includes(sweepMemo(sweep.id))) continue
       if ((await checkSweepTransaction(merchant, sweep, s.signature)).kind === 'ok') return markConfirmed(sweep, s.signature)
     }
+    if (sweep.status === 'signing') {
+      // Once the blockhash has expired (plus a margin for confirmation), a transaction that isn't
+      // onchain by now never will be: safe to sign again.
+      const height = await rpc.getBlockHeight({ commitment: 'confirmed' }).send()
+      if (sweep.signingValidUntil !== null && height > sweep.signingValidUntil + 32n) {
+        const [row] = await sql<SweepRow[]>`
+          update sweeps set status = 'proposed', signing_valid_until = null,
+            error = 'The wallet did not send it; nothing moved'
+          where id = ${sweep.id} and status = 'signing' returning *`
+        return row ?? sweep
+      }
+    }
   }
   return sweep
 }
 
 async function markConfirmed(sweep: SweepRow, signature: Signature): Promise<SweepRow> {
   const [row] = await sql<SweepRow[]>`
-    update sweeps set status = 'confirmed', signature = ${signature}, error = null
-    where id = ${sweep.id} and status in ('proposed', 'submitted', 'cancelled') returning *`
+    update sweeps set status = 'confirmed', signature = ${signature}, error = null, signing_valid_until = null
+    where id = ${sweep.id} and status in ('proposed', 'signing', 'submitted', 'cancelled') returning *`
   return row ?? (await sql<SweepRow[]>`select * from sweeps where id = ${sweep.id}`)[0]!
 }
 

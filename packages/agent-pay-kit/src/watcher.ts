@@ -4,13 +4,20 @@ import type { PaymentToken } from './tokens'
 
 export type SolanaRpc = Rpc<SolanaRpcApi>
 
-/** Successful signatures that include `reference`, oldest first. */
-export async function findSignaturesByReference(rpc: SolanaRpc, reference: Address): Promise<Signature[]> {
-  const sigs = await rpc.getSignaturesForAddress(reference, { limit: 1000, commitment: 'confirmed' }).send()
-  return sigs
-    .filter((s) => s.err === null)
-    .map((s) => s.signature)
-    .reverse()
+/**
+ * Successful signatures that include `reference`, oldest first. Pages through the whole history
+ * (up to `maxPages` × 1000), so a flood of failed transactions can't push the real payment out of view.
+ */
+export async function findSignaturesByReference(rpc: SolanaRpc, reference: Address, maxPages = 20): Promise<Signature[]> {
+  const ok: Signature[] = []
+  let before: Signature | undefined
+  for (let page = 0; page < maxPages; page++) {
+    const batch = await rpc.getSignaturesForAddress(reference, { limit: 1000, before, commitment: 'confirmed' }).send()
+    for (const s of batch) if (s.err === null) ok.push(s.signature)
+    if (batch.length < 1000) break
+    before = batch.at(-1)!.signature
+  }
+  return ok.reverse()
 }
 
 /** Oldest successful signature that includes `reference`, or null if nothing has been sent yet. */

@@ -131,7 +131,12 @@ export default function AgentScreen() {
             </Text>
             {sweep.reason && <Text style={ui.muted}>{sweep.reason}</Text>}
             {sweep.error && <Text style={[ui.muted, { color: colors.warn }]}>{sweep.error}</Text>}
-            {sweep.status === 'submitted' ? (
+            {sweep.status === 'signing' && !signing ? (
+              <View style={{ gap: 8 }}>
+                <Text style={ui.muted}>Waiting to hear whether the wallet sent it. This takes up to a minute.</Text>
+                <Button title="Check again" variant="secondary" onPress={checkAgain} />
+              </View>
+            ) : sweep.status === 'submitted' || sweep.status === 'signing' ? (
               <View style={{ gap: 8 }}>
                 <View style={ui.row}>
                   {signing && <ActivityIndicator color={colors.sea} />}

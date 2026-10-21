@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { fromBaseUnits, toBaseUnits } from '@tilltide/agent-pay-kit'
 import { z } from 'zod'
+import { isDate } from '../dates'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from '../db'
 import { merchantToken } from '../services/merchants'
 import { issuePointsForPayment, serializePayment } from '../services/payments'
@@ -69,7 +70,7 @@ export function buildTools(merchant: MerchantRow, proposed: SweepRow[]) {
       inputSchema: z.object({ date: dateSchema, reconcile: z.boolean().optional() }),
       run: async ({ date, reconcile }) => {
         const day = date ?? todayIn(merchant.timezone)
-        if (Number.isNaN(Date.parse(`${day}T00:00:00Z`))) return 'Invalid date'
+        if (!isDate(day)) return 'Invalid date'
         const summary = await getDailySummary(merchant, day)
         const reconciliation = reconcile ? await reconcileDay(merchant, day) : undefined
         return JSON.stringify({ summary, reconciliation })

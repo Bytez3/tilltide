@@ -17,7 +17,12 @@ export function SetupCard() {
     try {
       await signInAndSetUp(name)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const message = e instanceof Error ? e.message : String(e)
+      setError(
+        /no installed wallet/i.test(message)
+          ? 'No Solana wallet found on this phone. Install Phantom or Solflare (or use a Seeker), then try again.'
+          : message,
+      )
     } finally {
       setBusy(false)
     }

@@ -36,6 +36,9 @@ export function useSignSweep(merchant: Merchant | null) {
         value: blockhash,
       } = await client.rpc.getLatestBlockhash().send()
       // One signer object for both fee payer and transfer authority, so the wallet signs once.
+      // Lock the sweep on the server until this blockhash expires: even if everything after this point
+      // fails, the sweep can't be signed again until the chain shows whether this one landed.
+      await api.beginSweep(latest.id, blockhash.lastValidBlockHeight)
       const signer = getTransactionSigner(account.address, slot)
       const instructions = await getSweepInstructions({
         from: signer,
@@ -69,8 +72,9 @@ async function submitWithRetry(id: string, signature: string): Promise<Sweep> {
     try {
       return await api.submitSweep(id, signature)
     } catch (e) {
-      // Only network failures are worth retrying; a 400 means the backend rejected it.
-      if (!(e instanceof ApiError) || e.status !== 0 || attempt >= 5) throw e
+      // Retry network and server errors (the wallet has already sent it); a 4xx means it was rejected.
+      const retryable = e instanceof ApiError && (e.status === 0 || e.status >= 500)
+      if (!retryable || attempt >= 5) throw e
       await new Promise((r) => setTimeout(r, 2000))
     }
   }

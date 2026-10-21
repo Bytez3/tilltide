@@ -10,7 +10,7 @@ export const sql = postgres(config.databaseUrl, {
 })
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired'
-export type SweepStatus = 'proposed' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
+export type SweepStatus = 'proposed' | 'signing' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
 
 export interface MerchantRow {
   id: string
@@ -63,6 +63,8 @@ export interface SweepRow {
   status: SweepStatus
   signature: string | null
   submittedAt: Date | null
+  /** While 'signing': the block height after which the wallet's transaction can no longer land. */
+  signingValidUntil: bigint | null
   error: string | null
   createdAt: Date
 }

@@ -39,6 +39,7 @@ export default function ChargeScreen() {
     setAmount((current) => {
       if (key === '⌫') return current.slice(0, -1)
       if (key === '.' && current.includes('.')) return current
+      if (key === '.' && current === '') return '0.'
       if (current.includes('.') && current.split('.')[1]!.length >= 2) return current
       if (current === '0' && key !== '.') return key
       return (current + key).slice(0, 9)

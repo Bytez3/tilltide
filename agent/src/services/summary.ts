@@ -7,17 +7,12 @@ import { rpc } from '../solana'
 import { merchantToken } from './merchants'
 import { tillBalance } from './sweeps'
 
-/** Start and end of a calendar day (YYYY-MM-DD) in the merchant's timezone, as a Postgres range. */
-function dayBounds(date: string, timezone: string) {
-  return sql`(${date}::date::timestamp at time zone ${timezone})`
-}
-
 export async function getPaymentsForDay(merchant: MerchantRow, date: string): Promise<PaymentRow[]> {
-  const start = dayBounds(date, merchant.timezone)
   return sql<PaymentRow[]>`
     select * from payments
     where merchant_id = ${merchant.id}
-      and created_at >= ${start} and created_at < ${start} + interval '1 day'
+      and created_at >= (${date}::date::timestamp at time zone ${merchant.timezone})
+      and created_at < ((${date}::date + 1)::timestamp at time zone ${merchant.timezone})
     order by created_at`
 }
 
@@ -54,7 +49,7 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     averageSale: paid.length ? fromBaseUnits(total / BigInt(paid.length), token.decimals) : '0',
     uniqueCustomers: byCustomer.size,
     topCustomers,
-    pointsIssued: paid.reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
+    pointsIssued: paid.filter((p) => p.pointsStatus === 'issued').reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
     byRail: {
       solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + p.amount, 0n), token.decimals),
       paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
@@ -73,8 +68,6 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
 export async function reconcileDay(merchant: MerchantRow, date: string) {
   const token = merchantToken(merchant)
   const payments = await getPaymentsForDay(merchant, date)
-  // Only money the ledger accounts for. An underpaid transfer still moved tokens, so it must show as unmatched.
-  const known = new Set(payments.filter((p) => p.status === 'paid').map((p) => p.signature).filter(Boolean))
   const paypalPaid = payments.filter((p) => p.rail === 'paypal' && p.status === 'paid')
 
   const [tillAccount] = await findAssociatedTokenPda({
@@ -85,16 +78,12 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
 
   const balance = await tillBalance(merchant)
 
-  const [startRow] = await sql<{ start: Date }[]>`select ${dayBounds(date, merchant.timezone)} as start`
-  const startSec = BigInt(Math.floor(startRow!.start.getTime() / 1000))
-  const endSec = startSec + 86_400n
-
-  const sweeps = await sql<{ amount: bigint; signature: string | null }[]>`
-    select amount, signature from sweeps where merchant_id = ${merchant.id} and status = 'confirmed'
-      and created_at >= ${dayBounds(date, merchant.timezone)}
-      and created_at < ${dayBounds(date, merchant.timezone)} + interval '1 day'`
-
-  for (const sweep of sweeps) if (sweep.signature) known.add(sweep.signature)
+  // Day bounds from Postgres, so days when the clocks change (23 or 25 hours) are right.
+  const [bounds] = await sql<{ start: Date; end: Date }[]>`
+    select (${date}::date::timestamp at time zone ${merchant.timezone}) as start,
+           ((${date}::date + 1)::timestamp at time zone ${merchant.timezone}) as end`
+  const startSec = BigInt(Math.floor(bounds!.start.getTime() / 1000))
+  const endSec = BigInt(Math.floor(bounds!.end.getTime() / 1000))
 
   // Page back through the till's history until we pass the start of the day.
   type SigInfo = { signature: Signature; err: unknown; blockTime: bigint | null }
@@ -111,6 +100,24 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     if (!last || batch.length < 1000 || (last.blockTime !== null && last.blockTime < startSec)) break
     before = last.signature
   }
+  // Money the ledger accounts for, whichever day the request was created (a sale at 23:58 paid at 00:01,
+  // a late payment, a sweep signed the day after it was proposed). Underpaid transfers aren't 'paid', so
+  // they still show as unmatched.
+  const daySigs = dayActivity.map((s) => s.signature as string)
+  const known = new Set<string>()
+  let sweptToday = 0n
+  if (daySigs.length) {
+    const rows = await sql<{ signature: string; sweptAmount: bigint | null }[]>`
+      select signature, null::bigint as swept_amount from payments
+        where merchant_id = ${merchant.id} and status = 'paid' and signature = any(${daySigs})
+      union all
+      select signature, amount as swept_amount from sweeps
+        where merchant_id = ${merchant.id} and status = 'confirmed' and signature = any(${daySigs})`
+    for (const r of rows) {
+      known.add(r.signature)
+      if (r.sweptAmount !== null) sweptToday += r.sweptAmount
+    }
+  }
   const unmatched = dayActivity
     .filter((s) => s.err === null && !known.has(s.signature))
     .map((s) => ({ signature: s.signature, time: new Date(Number(s.blockTime) * 1000).toISOString() }))
@@ -124,10 +131,7 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     // PayPal takings settle to the merchant's PayPal balance, not the till wallet.
     paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount, 0n), token.decimals),
     paypalCaptures: paypalPaid.map((p) => p.paypalCaptureId),
-    sweptToOwnerToday: fromBaseUnits(
-      sweeps.reduce((s, r) => s + r.amount, 0n),
-      token.decimals,
-    ),
+    sweptToOwnerToday: fromBaseUnits(sweptToday, token.decimals),
     // Transfers in or out of the till that Tilltide didn't create. The agent explains these.
     onchainActivityNotInLedger: unmatched,
     explorerCluster: config.cluster,

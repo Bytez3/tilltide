@@ -77,9 +77,12 @@ create index if not exists sessions_wallet on sessions (wallet);
 -- Sweeps: 'submitted' = signed and sent, waiting for the chain. Never re-signed while submitted.
 alter table sweeps add column if not exists submitted_at timestamptz;
 alter table sweeps add column if not exists error text;
-alter table sweeps drop constraint if exists sweeps_status_check;
-alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'submitted', 'confirmed', 'cancelled'));
 
 -- 'failed': the sweep's transaction landed but didn't add up. Never re-signable; needs a human.
 alter table sweeps drop constraint if exists sweeps_status_check;
 alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'submitted', 'confirmed', 'cancelled', 'failed'));
+
+-- 'signing': the app is about to open the wallet. Locked until the transaction's blockhash expires.
+alter table sweeps add column if not exists signing_valid_until bigint;
+alter table sweeps drop constraint if exists sweeps_status_check;
+alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'signing', 'submitted', 'confirmed', 'cancelled', 'failed'));

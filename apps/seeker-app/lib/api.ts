@@ -42,7 +42,7 @@ export interface Sweep {
   token: 'USDC' | 'PYUSD'
   toWallet: string
   reason: string | null
-  status: 'proposed' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
+  status: 'proposed' | 'signing' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
   signature: string | null
   error: string | null
 }
@@ -123,6 +123,8 @@ export const api = {
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
   chat: (messages: ChatTurn[]) => request<{ reply: string; sweeps: Sweep[] }>('/shop/chat', post({ messages })),
 
+  beginSweep: (id: string, lastValidBlockHeight: bigint) =>
+    request<Sweep>(`/shop/sweeps/${id}/begin`, post({ lastValidBlockHeight: lastValidBlockHeight.toString() })),
   checkSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/check`, post()),
   submitSweep: (id: string, signature: string) => request<Sweep>(`/shop/sweeps/${id}/submit`, post({ signature })),
   cancelSweep: (id: string) => request<Sweep>(`/shop/sweeps/${id}/cancel`, post()),

@@ -323,6 +323,16 @@ async function main() {
 
     let tillToken = ''
 
+    /** What the app does to sweep: lock it with the blockhash expiry, have the wallet sign and send, then report. */
+    async function sweepLikeTheApp(sweepId: string, instructions: Instruction[]) {
+      const { value } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+      const begin = await api('POST', `/shop/sweeps/${sweepId}/begin`, { lastValidBlockHeight: value.lastValidBlockHeight.toString() }, tillToken)
+      assert.equal(begin.status, 200, JSON.stringify(begin.body))
+      assert.equal(begin.body.status, 'signing')
+      const signature = await send(till, instructions)
+      return { signature, result: await api('POST', `/shop/sweeps/${sweepId}/submit`, { signature }, tillToken) }
+    }
+
     await step('sign in with Solana: valid signature gets a session; forged or replayed ones do not', async () => {
       assert.equal((await api('GET', '/shop')).status, 401)
       assert.equal((await api('GET', '/shop', undefined, 'made-up-token')).status, 401)
@@ -451,6 +461,10 @@ async function main() {
       assert.equal((await post({ amount: '1.005', rail: 'paypal' })).status, 400, 'PayPal needs whole cents')
       assert.equal((await post({})).status, 400)
       assert.equal((await api('GET', '/shop/summary?date=yesterday', undefined, tillToken)).status, 400)
+      assert.equal((await api('GET', '/shop/summary?date=2026-02-31', undefined, tillToken)).status, 400)
+      assert.equal((await api('PATCH', '/shop', { timezone: '+01:00' }, tillToken)).status, 400)
+      assert.equal((await api('PATCH', '/shop', { timezone: '+0100' }, tillToken)).status, 400)
+      assert.equal((await api('PATCH', '/shop', { timezone: 'Europe/London' }, tillToken)).status, 200)
       assert.equal((await api('GET', '/shop/payments/not-a-uuid', undefined, tillToken)).status, 404)
       assert.equal((await api('POST', '/shop/sweeps/not-a-uuid/check', undefined, tillToken)).status, 404)
       assert.equal((await api('POST', '/auth/verify', { address: 'x', signedMessage: '!!', signature: '' })).status, 400)
@@ -492,11 +506,10 @@ async function main() {
       assert.equal(sweep.status, 'proposed')
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/check`, undefined, tillToken)).body.status, 'proposed')
 
-      const signature = await send(
-        till,
+      const { signature, result: submitted } = await sweepLikeTheApp(
+        sweep.id,
         await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: BigInt(sweep.amount), sweepId: sweep.id }),
       )
-      const submitted = await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature }, tillToken)
       assert.equal(submitted.status, 200, JSON.stringify(submitted.body))
       assert.equal(submitted.body.status, 'confirmed')
       assert.equal(await tokenBalance(owner.address, USDC, TOKEN), 10_000_000n)
@@ -538,10 +551,14 @@ async function main() {
 
       // Signed but never broadcast: what a dropped transaction looks like.
       const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 500_000n, sweepId: sweep.id })
+      const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+      assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)).status, 200)
+      // Opening the wallet a second time while the first is still live is refused.
+      assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)).status, 409)
       const { signature: dropped } = await signTransaction(till, instructions)
       const submitted = await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature: dropped }, tillToken)
       assert.equal(submitted.body.status, 'submitted')
-      await assert.rejects(proposeSweep(merchant, 500_000n, null), /still confirming/)
+      await assert.rejects(proposeSweep(merchant, 500_000n, null), /still being signed or confirmed/)
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/cancel`, undefined, tillToken)).status, 400)
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/check`, undefined, tillToken)).body.status, 'submitted')
 
@@ -575,14 +592,31 @@ async function main() {
       ])
       assert.equal((await api('POST', `/shop/sweeps/${a.id}/check`, undefined, tillToken)).body.status, 'proposed')
 
-      // The owner signs A just as the agent proposes B (which cancels A). A's transfer still counts.
+      // While A is open in the wallet, the agent can't propose B (which would cancel A).
       const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 250_000n, sweepId: a.id })
-      const b = serializeSweep(await proposeSweep(merchant, 100_000n, null))
-      assert.equal((await sql`select status from sweeps where id = ${a.id}`)[0]!.status, 'cancelled')
+      const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+      await api('POST', `/shop/sweeps/${a.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)
+      await assert.rejects(proposeSweep(merchant, 100_000n, null), /still being signed/)
+      assert.equal((await api('POST', `/shop/sweeps/${a.id}/cancel`, undefined, tillToken)).status, 400, "can't cancel mid-signing")
       const signature = await send(till, instructions)
       const submitted = await api('POST', `/shop/sweeps/${a.id}/submit`, { signature }, tillToken)
       assert.equal(submitted.body.status, 'confirmed', JSON.stringify(submitted.body))
-      await api('POST', `/shop/sweeps/${b.id}/cancel`, undefined, tillToken)
+
+      // A signed sweep that was cancelled earlier still counts if its memo lands.
+      const c2 = serializeSweep(await proposeSweep(merchant, 100_000n, null))
+      await api('POST', `/shop/sweeps/${c2.id}/cancel`, undefined, tillToken)
+      const late = await send(till, await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 100_000n, sweepId: c2.id }))
+      assert.equal((await api('POST', `/shop/sweeps/${c2.id}/submit`, { signature: late }, tillToken)).body.status, 'confirmed')
+
+      // A signing lock whose blockhash has expired with nothing onchain reopens the sweep.
+      const d = serializeSweep(await proposeSweep(merchant, 100_000n, null))
+      const { value: bh2 } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+      await api('POST', `/shop/sweeps/${d.id}/begin`, { lastValidBlockHeight: bh2.lastValidBlockHeight.toString() }, tillToken)
+      await sql`update sweeps set signing_valid_until = 1 where id = ${d.id}`
+      const reopened = await api('POST', `/shop/sweeps/${d.id}/check`, undefined, tillToken)
+      assert.equal(reopened.body.status, 'proposed')
+      assert.match(reopened.body.error, /did not send/)
+      await api('POST', `/shop/sweeps/${d.id}/cancel`, undefined, tillToken)
     })
 
     await step('PYUSD (Token-2022): pay, verify, points, sweep', async () => {
@@ -599,11 +633,11 @@ async function main() {
       const { getSweepInstructions, TOKENS } = await import('@tilltide/agent-pay-kit')
       const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
       const sweep = serializeSweep(await proposeSweep(merchant, 3_250_000n, null))
-      const signature = await send(
-        till,
+      const { result } = await sweepLikeTheApp(
+        sweep.id,
         await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.PYUSD, amount: 3_250_000n, sweepId: sweep.id }),
       )
-      assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature }, tillToken)).body.status, 'confirmed')
+      assert.equal(result.body.status, 'confirmed')
       assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_250_000n)
     })
 
@@ -709,6 +743,12 @@ async function main() {
       const created = await api('POST', '/shop/payments', { amount: '1' }, tillToken)
       await sql`update payments set created_at = now() - interval '31 minutes' where id = ${created.body.id}`
       await until('expired', async () => (await sql`select status from payments where id = ${created.body.id}`)[0]!.status === 'expired')
+    })
+
+    await step('migrations re-run cleanly on a database with every sweep status', async () => {
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      await sql`insert into sweeps (merchant_id, amount, token_symbol, to_wallet, status) values (${merchant.id}, 1, 'USDC', ${owner.address}, 'failed')`
+      await sql.unsafe(await readFile(new URL('../../src/db/schema.sql', import.meta.url), 'utf8'))
     })
 
     console.log(`\nAll ${passed} end-to-end checks passed.`)
