@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
 import { SetupCard } from '@/components/setup-card'
@@ -15,7 +15,9 @@ const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 export default function ChargeScreen() {
   const { merchant, loading } = useMerchant()
   const [amount, setAmount] = useState('')
-  const [rail, setRail] = useState<Rail>('solana')
+  // PayPal first: most customers have PayPal or a card; wallets are the second option.
+  const [rail, setRail] = useState<Rail>('paypal')
+  const [loyaltyCode, setLoyaltyCode] = useState('')
   const [usePoints, setUsePoints] = useState(false)
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
@@ -74,7 +76,12 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
-      const created = await api.createPayment(amount.replace(/\.$/, ''), rail, rail === 'solana' && usePoints)
+      const created = await api.createPayment(
+        amount.replace(/\.$/, ''),
+        activeRail,
+        activeRail === 'solana' && usePoints,
+        activeRail === 'paypal' && loyaltyCode.trim() ? loyaltyCode.trim() : undefined,
+      )
       current.current = created.id
       setPayment(created)
       watch(created)
@@ -97,6 +104,7 @@ export default function ChargeScreen() {
     current.current = null
     setPayment(null)
     setAmount('')
+    setLoyaltyCode('')
   }
 
   if (payment) {
@@ -144,14 +152,14 @@ export default function ChargeScreen() {
             <Text style={{ fontSize: 56, color: colors.paid }}>✓</Text>
             <Text style={[ui.h1, { color: colors.paid }]}>Paid</Text>
             {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
-            {payment.pointsRedeemed !== '0' && (
+            {payment.pointsRedeemed !== '0' && payment.pointsRedeemed !== undefined && (
               <Text style={ui.body}>
                 Used {payment.pointsRedeemed} points ({formatAmount(payment.discount, payment.decimals, payment.token)} off)
               </Text>
             )}
             <View style={{ marginTop: 16, alignItems: 'center', gap: 6 }}>
               <QRCode value={`${AppConfig.apiUrl}/r/${payment.id}`} size={120} />
-              <Text style={ui.muted}>Customer: scan for your receipt{payment.rail === 'solana' ? ' and points' : ''}</Text>
+              <Text style={ui.muted}>Customer: scan for your receipt and points</Text>
               {AppConfig.sandbox && (
                 <Text style={{ color: colors.sea, fontWeight: '600' }} onPress={() => Linking.openURL(`${AppConfig.apiUrl}/r/${payment.id}`)}>
                   Open receipt
@@ -187,22 +195,25 @@ export default function ChargeScreen() {
   }
 
   const valid = Number(amount) > 0
-  const currency = rail === 'paypal' ? 'USD' : merchant.token
+  // Without PayPal on the server the till falls back to wallet payments.
+  const activeRail: Rail = merchant.paypalEnabled ? rail : 'solana'
+  const currency = activeRail === 'paypal' ? 'USD' : merchant.token
+  const paypalNotConnected = activeRail === 'paypal' && merchant.paypal.required && merchant.paypal.status !== 'connected' && !merchant.paypal.email
   return (
     <View style={[ui.screen, ui.content]}>
       <View style={[ui.row, { justifyContent: 'space-between' }]}>
         <Text style={ui.muted}>{merchant.name}</Text>
         {merchant.paypalEnabled && (
           <View style={[ui.row, { gap: 0, borderRadius: 10, borderWidth: 1, borderColor: colors.line, overflow: 'hidden' }]}>
-            {(['solana', 'paypal'] as const).map((r) => (
+            {(['paypal', 'solana'] as const).map((r) => (
               <Pressable
                 key={r}
                 onPress={() => setRail(r)}
                 accessibilityRole="button"
-                accessibilityState={{ selected: rail === r }}
-                style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: rail === r ? colors.sea : colors.card }}
+                accessibilityState={{ selected: activeRail === r }}
+                style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: activeRail === r ? colors.sea : colors.card }}
               >
-                <Text style={{ color: rail === r ? colors.seaInk : colors.ink, fontWeight: '600' }}>
+                <Text style={{ color: activeRail === r ? colors.seaInk : colors.ink, fontWeight: '600' }}>
                   {r === 'solana' ? 'Wallet' : 'PayPal'}
                 </Text>
               </Pressable>
@@ -210,7 +221,21 @@ export default function ChargeScreen() {
           </View>
         )}
       </View>
-      {rail === 'solana' && merchant.pointsMint && (
+      {activeRail === 'paypal' && (
+        <TextInput
+          style={ui.input}
+          placeholder="Loyalty code from the customer's receipt (optional)"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          value={loyaltyCode}
+          onChangeText={setLoyaltyCode}
+          maxLength={11}
+        />
+      )}
+      {paypalNotConnected && (
+        <Text style={[ui.muted, { color: colors.warn }]}>Connect your PayPal in Settings to take PayPal payments.</Text>
+      )}
+      {activeRail === 'solana' && merchant.pointsMint && (
         <Pressable
           accessibilityRole="switch"
           accessibilityState={{ checked: usePoints }}
@@ -249,7 +274,7 @@ export default function ChargeScreen() {
         ))}
       </View>
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
-      <Button title={valid ? `Charge ${amount} ${currency}` : 'Enter an amount'} onPress={charge} disabled={!valid} loading={creating} />
+      <Button title={valid ? `Charge ${amount} ${currency}` : 'Enter an amount'} onPress={charge} disabled={!valid || paypalNotConnected} loading={creating} />
     </View>
   )
 }

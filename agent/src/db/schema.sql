@@ -134,3 +134,24 @@ alter table merchants add constraint merchants_redeem_max_percent_check check (r
 alter table payments add column if not exists allow_points boolean not null default false;
 alter table payments add column if not exists points_redeemed bigint not null default 0;
 alter table payments add column if not exists discount bigint not null default 0;
+
+-- PayPal first: each shop connects its own PayPal (partner onboarding) or names a PayPal email to be paid.
+alter table merchants add column if not exists paypal_merchant_id text;
+alter table merchants add column if not exists paypal_email text;
+alter table merchants add column if not exists paypal_status text not null default 'none';
+alter table merchants drop constraint if exists merchants_paypal_status_check;
+alter table merchants add constraint merchants_paypal_status_check check (paypal_status in ('none', 'pending', 'connected'));
+-- New shops default to PYUSD, PayPal's stablecoin.
+alter table merchants alter column token_symbol set default 'PYUSD';
+-- Tilltide's platform fee on a PayPal sale, and whose points (PayPal loyalty) a sale spends.
+alter table payments add column if not exists paypal_fee bigint not null default 0;
+alter table payments add column if not exists loyalty_key text;
+
+-- PayPal customers' loyalty codes (they have no wallet to hold points): one per customer per shop.
+create table if not exists loyalty_codes (
+  code text primary key,
+  merchant_id uuid not null references merchants(id),
+  payer_key text not null,
+  created_at timestamptz not null default now(),
+  unique (merchant_id, payer_key)
+);

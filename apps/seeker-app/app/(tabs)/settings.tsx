@@ -1,15 +1,19 @@
 import { isAddress } from '@solana/kit'
 import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import { SetupCard } from '@/components/setup-card'
 import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api } from '@/lib/api'
+import { AppConfig } from '@/constants/app-config'
 import { shortAddress } from '@/lib/format'
 
 export default function SettingsScreen() {
-  const { merchant, update, signOut } = useMerchant()
+  const { merchant, update, signOut, replace } = useMerchant()
+  const [paypalEmail, setPaypalEmail] = useState('')
+  const [paypalBusy, setPaypalBusy] = useState(false)
+  const [paypalMessage, setPaypalMessage] = useState<string | null>(null)
   const [rate, setRate] = useState('')
   const [owner, setOwner] = useState('')
   const [token, setToken] = useState<'USDC' | 'PYUSD'>('USDC')
@@ -26,6 +30,7 @@ export default function SettingsScreen() {
     setOwner(merchant.ownerWallet ?? '')
     setToken(merchant.token)
     setPointValue(merchant.pointValue)
+    setPaypalEmail(merchant.paypal.email ?? '')
     setMaxPercent(String(merchant.redeemMaxPercent))
   }, [merchant])
 
@@ -48,6 +53,51 @@ export default function SettingsScreen() {
       setMessage(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function connectPayPal() {
+    setPaypalBusy(true)
+    setPaypalMessage(null)
+    try {
+      const { url } = await api.connectPayPal()
+      if (AppConfig.sandbox) {
+        // Sandbox: there's no real paypal.com; finish onboarding as if the owner did.
+        await api.sandbox.finishPayPalOnboarding(url)
+        replace(await api.refreshPayPal())
+      } else {
+        await Linking.openURL(url)
+        setPaypalMessage('Finish connecting on PayPal, then come back and tap "Check PayPal".')
+      }
+    } catch (e) {
+      setPaypalMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPaypalBusy(false)
+    }
+  }
+
+  async function checkPayPal() {
+    setPaypalBusy(true)
+    try {
+      const updated = await api.refreshPayPal()
+      replace(updated)
+      setPaypalMessage(updated.paypal.status === 'connected' ? null : 'Not connected yet.')
+    } catch (e) {
+      setPaypalMessage(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPaypalBusy(false)
+    }
+  }
+
+  async function savePaypalEmail() {
+    setPaypalMessage(null)
+    try {
+      const email = paypalEmail.trim()
+      if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('That is not an email address')
+      await update({ paypalEmail: email || null })
+      setPaypalMessage('Saved')
+    } catch (e) {
+      setPaypalMessage(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -98,6 +148,37 @@ export default function SettingsScreen() {
         </View>
       ) : (
         <SetupCard />
+      )}
+
+      {merchant && merchant.paypalEnabled && (
+        <View style={ui.card}>
+          <Text style={ui.h2}>PayPal</Text>
+          {merchant.paypal.status === 'connected' ? (
+            <Text style={[ui.body, { color: colors.paid, fontWeight: '600' }]}>Connected ✓ PayPal sales go to your PayPal account.</Text>
+          ) : (
+            <Text style={ui.muted}>
+              Connect your PayPal so PayPal and card payments go straight to your account.
+              {merchant.paypal.required ? ' PayPal sales are off until you do.' : ''}
+            </Text>
+          )}
+          {merchant.paypal.onboardingAvailable && merchant.paypal.status !== 'connected' && (
+            <View style={ui.row}>
+              <Button title="Connect PayPal" onPress={connectPayPal} loading={paypalBusy} style={{ flex: 2 }} />
+              {merchant.paypal.status === 'pending' && <Button title="Check PayPal" variant="secondary" onPress={checkPayPal} style={{ flex: 1 }} />}
+            </View>
+          )}
+          {merchant.paypal.onboardingAvailable && (
+            <Text style={ui.muted}>Tilltide fee on PayPal sales: {merchant.paypal.feePercent}%, taken by PayPal.</Text>
+          )}
+          {!merchant.paypal.onboardingAvailable && (
+            <>
+              <Text style={ui.body}>PayPal email to be paid to</Text>
+              <TextInput style={ui.input} autoCapitalize="none" keyboardType="email-address" value={paypalEmail} onChangeText={setPaypalEmail} />
+              <Button title="Save PayPal email" variant="secondary" onPress={savePaypalEmail} />
+            </>
+          )}
+          {paypalMessage && <Text style={ui.muted}>{paypalMessage}</Text>}
+        </View>
       )}
 
       <View style={ui.card}>

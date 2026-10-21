@@ -27,7 +27,8 @@ export async function proposeRefund(merchant: MerchantRow, paymentId: string, am
     const [sums] = await tx<{ committed: bigint }[]>`
       select coalesce(sum(amount), 0)::bigint as committed from refunds
       where payment_id = ${payment.id} and status in ('processing', 'pending', 'completed')`
-    const remaining = payment.amount - sums!.committed
+    // Only the cash part can go back through PayPal; points spent on the sale aren't cash.
+    const remaining = payment.amount - payment.discount - sums!.committed
     const refundAmount = amount ?? remaining
     if (refundAmount <= 0n) throw new RefundError('This payment has already been fully refunded')
     if (refundAmount > remaining) {
@@ -86,7 +87,7 @@ export async function approveRefund(
       const [sums] = await tx<{ committed: bigint }[]>`
         select coalesce(sum(amount), 0)::bigint as committed from refunds
         where payment_id = ${refund.paymentId} and status in ('processing', 'pending', 'completed')`
-      if (sums!.committed + refund.amount > p!.amount) throw new RefundError('That would refund more than the customer paid')
+      if (sums!.committed + refund.amount > p!.amount - p!.discount) throw new RefundError('That would refund more than the customer paid')
       const [row] = await tx<RefundRow[]>`
         update refunds set status = 'processing', approval_nonce = null, approved_at = now()
         where id = ${refund.id} and status = 'proposed' and approval_nonce = ${nonce} returning *`
@@ -140,6 +141,8 @@ export async function executeRefund(refund: RefundRow): Promise<RefundRow> {
       { value: Number(fromBaseUnits(refund.amount, LEDGER_DECIMALS)).toFixed(2), currency: config.paypalCurrency },
       `refund-${refund.id}`,
       refund.reason ?? undefined,
+      // A connected shop's sale is refunded on its behalf, from its PayPal.
+      (await sql<MerchantRow[]>`select * from merchants where id = ${refund.merchantId}`)[0]?.paypalMerchantId ?? undefined,
     )
     if (result.status === 'COMPLETED') return finish({ status: 'completed', error: null, paypalRefundId: result.id })
     if (result.status === 'PENDING') return finish({ status: 'pending', error: null, paypalRefundId: result.id })

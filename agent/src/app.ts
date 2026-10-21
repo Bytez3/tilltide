@@ -19,7 +19,9 @@ import { config } from './config'
 import { isDate } from './dates'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow, type SweepRow } from './db'
 import { merchantToken } from './services/merchants'
-import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, serializePayment } from './services/payments'
+import { checkPayPalPayment, createPayment, createPayPalPayment, getPayment, PayPalSaleError, serializePayment } from './services/payments'
+import { OnboardingError, refreshPayPalConnection, startPayPalOnboarding } from './services/paypal-onboarding'
+import { PayPalError } from './paypal'
 import { approveRefund, getRefund, proposeRefund, refundChallenge, RefundError, serializeRefund } from './services/refunds'
 import { getDailySummary, reconcileDay, todayIn } from './services/summary'
 import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
@@ -62,6 +64,15 @@ function serializeMerchant(m: MerchantRow) {
     paypalEnabled: Boolean(config.paypal),
     pointValue: fromBaseUnits(m.pointValue, LEDGER_DECIMALS),
     redeemMaxPercent: m.redeemMaxPercent,
+    paypal: {
+      status: m.paypalStatus,
+      email: m.paypalEmail,
+      /** Connect-with-PayPal onboarding is available (Tilltide is set up as a PayPal platform). */
+      onboardingAvailable: Boolean(config.paypal && config.paypalPlatform.partnerMerchantId),
+      /** PayPal sales are refused until the shop connects its PayPal (always in live mode). */
+      required: config.paypalPlatform.requireConnected,
+      feePercent: config.paypalPlatform.feeBps / 100,
+    },
   }
 }
 
@@ -135,6 +146,18 @@ app.get('/paypal/return', async (c) => {
   return latest.status === 'paid'
     ? c.html(page('Paid ✓', 'Thanks! You can close this page.'))
     : c.html(page('Almost there', 'Your payment is processing. The shop will see it in a moment.'))
+})
+
+/**
+ * PayPal sends the owner here after onboarding. The query string is only a hint: the connection is
+ * confirmed by asking PayPal directly.
+ */
+app.get('/paypal/onboarded', async (c) => {
+  const trackingId = c.req.query('merchantId') ?? ''
+  const merchant = isUuid(trackingId) ? await refreshPayPalConnection(trackingId).catch(() => null) : null
+  return merchant?.paypalStatus === 'connected'
+    ? c.html(page('PayPal connected ✓', 'Go back to Tilltide. PayPal sales now go to your PayPal account.'))
+    : c.html(page('Almost there', 'PayPal is still setting up your account. Go back to Tilltide and tap "Check PayPal" in a moment.'))
 })
 
 app.get('/paypal/cancel', (c) => c.html(page('Payment cancelled', 'No money was taken.')))
@@ -240,6 +263,8 @@ shop.patch('/', async (c) => {
       /** What one point is worth when spent, e.g. "0.01". */
       pointValue: z.string().regex(/^\d+(\.\d{1,6})?$/).optional(),
       redeemMaxPercent: z.number().int().min(0).max(90).optional(),
+      /** Without PayPal onboarding: the PayPal email PayPal sales are paid to. */
+      paypalEmail: z.email().max(254).nullable().optional(),
       timezone: timezone.optional(),
     }),
   )
@@ -254,6 +279,7 @@ shop.patch('/', async (c) => {
       points_per_unit = ${input.pointsPerUnit ?? merchant.pointsPerUnit},
       point_value = ${input.pointValue !== undefined ? toBaseUnits(input.pointValue, LEDGER_DECIMALS).toString() : merchant.pointValue.toString()},
       redeem_max_percent = ${input.redeemMaxPercent ?? merchant.redeemMaxPercent},
+      paypal_email = ${input.paypalEmail === undefined ? merchant.paypalEmail : input.paypalEmail},
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
@@ -273,6 +299,8 @@ shop.post('/payments', async (c) => {
       rail: z.enum(['solana', 'paypal']).default('solana'),
       /** Let the customer pay part of the bill with loyalty points. */
       usePoints: z.boolean().default(false),
+      /** PayPal customer's loyalty code from an earlier receipt: spends their points on this bill. */
+      loyaltyCode: z.string().max(20).optional(),
     }),
   )
   if (input.usePoints && (input.rail !== 'solana' || !config.pointsMint)) {
@@ -291,9 +319,10 @@ shop.post('/payments', async (c) => {
   if (input.rail === 'paypal') {
     if (!config.paypal) throw new HTTPException(400, { message: 'PayPal is not set up on the server' })
     try {
-      const { payment, url } = await createPayPalPayment(merchant, amount, input.label)
+      const { payment, url } = await createPayPalPayment(merchant, amount, input.label, input.loyaltyCode || undefined)
       return c.json({ ...serializePayment(payment), url }, 201)
     } catch (err) {
+      if (err instanceof PayPalSaleError) throw new HTTPException(400, { message: err.message })
       throw new HTTPException(502, { message: `PayPal: ${(err as Error).message}` })
     }
   }
@@ -367,6 +396,24 @@ shop.get('/sweeps', async (c) => {
   const rows = await sql<SweepRow[]>`
     select * from sweeps where merchant_id = ${merchant.id} order by created_at desc limit 20`
   return c.json(rows.map(serializeSweep))
+})
+
+/** Starts Connect-with-PayPal: returns PayPal's onboarding link for the owner to open. */
+shop.post('/paypal/connect', async (c) => {
+  const merchant = await myShop(c)
+  try {
+    return c.json({ url: await startPayPalOnboarding(merchant) })
+  } catch (err) {
+    if (err instanceof OnboardingError) throw new HTTPException(409, { message: err.message })
+    if (err instanceof PayPalError) throw new HTTPException(502, { message: `PayPal: ${err.message}` })
+    throw err
+  }
+})
+
+/** Re-checks the PayPal connection with PayPal (after the owner finishes onboarding). */
+shop.post('/paypal/refresh', async (c) => {
+  const merchant = await myShop(c)
+  return c.json(serializeMerchant((await refreshPayPalConnection(merchant.id)) ?? merchant))
 })
 
 /** What the till holds right now, for pre-filling a sweep. */

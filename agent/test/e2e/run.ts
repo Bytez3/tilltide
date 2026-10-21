@@ -107,6 +107,10 @@ async function main() {
       TREASURY_WALLET: treasury.address,
       SWEEP_FEE_BPS: '50',
       ANTHROPIC_API_KEY: '',
+      PAYPAL_PARTNER_MERCHANT_ID: 'TILLTIDEPARTNER',
+      PAYPAL_BN_CODE: 'Tilltide_SP',
+      PAYPAL_REQUIRE_CONNECTED: 'true',
+      PAYPAL_FEE_BPS: '50',
       PAYPAL_CLIENT_ID: 'mock',
       PAYPAL_CLIENT_SECRET: 'mock',
       PAYPAL_API_BASE: `http://127.0.0.1:${API_PORT + 12}`,
@@ -306,7 +310,8 @@ async function main() {
       assert.equal(r.body.wallet, till.address)
       const again = await api('POST', '/shop', { name: 'Other name' }, tillToken)
       assert.equal(again.body.id, r.body.id, 'registering again returns the same shop')
-      const p = await api('PATCH', '/shop', { ownerWallet: owner.address, pointsPerUnit: 1 }, tillToken)
+      assert.equal(r.body.token, 'PYUSD', 'PayPal first: new shops take PayPal USD by default')
+      const p = await api('PATCH', '/shop', { ownerWallet: owner.address, pointsPerUnit: 1, token: 'USDC' }, tillToken)
       assert.equal(p.body.ownerWallet, owner.address)
       assert.equal((await api('PATCH', '/shop', { timezone: 'Mars/Olympus' }, tillToken)).status, 400)
       assert.equal((await api('PATCH', '/shop', { ownerWallet: till.address }, tillToken)).status, 400)
@@ -652,12 +657,40 @@ async function main() {
       assert.equal((await api('POST', '/shop/payments', { amount: '1', rail: 'paypal', usePoints: true }, tillToken)).status, 400)
     })
 
+    await step('PayPal first: a shop must connect its own PayPal; a forged onboarding return is ignored', async () => {
+      const shopId = (await api('GET', '/shop', undefined, tillToken)).body.id
+      const refused = await api('POST', '/shop/payments', { amount: '1', rail: 'paypal' }, tillToken)
+      assert.equal(refused.status, 400)
+      assert.match(refused.body.error, /Connect your PayPal/)
+
+      const connect = await api('POST', '/shop/paypal/connect', undefined, tillToken)
+      assert.equal(connect.status, 200)
+      assert.match(connect.body.url, new RegExp(`onboard\\?tracking=${shopId}`))
+      assert.equal((await api('GET', '/shop', undefined, tillToken)).body.paypal.status, 'pending')
+
+      // Someone crafts the return URL without finishing onboarding: not trusted.
+      const forged = await fetch(`${API}/paypal/onboarded?merchantId=${shopId}&merchantIdInPayPal=EVIL&permissionsGranted=true`).then((r) => r.text())
+      assert.match(forged, /Almost there/)
+      assert.equal((await api('GET', '/shop', undefined, tillToken)).body.paypal.status, 'pending')
+
+      paypal.completeOnboarding(shopId, 'SHOPPAYPAL1')
+      const done = await fetch(`${API}/paypal/onboarded?merchantId=${shopId}`).then((r) => r.text())
+      assert.match(done, /PayPal connected/)
+      const shop = (await api('GET', '/shop', undefined, tillToken)).body
+      assert.equal(shop.paypal.status, 'connected')
+      assert.equal(shop.paypal.feePercent, 0.5)
+    })
+
     await step('PayPal: QR opens checkout → customer approves → return page captures → Paid ✓', async () => {
       const created = await api('POST', '/shop/payments', { amount: '7.25', label: 'Cream tea', rail: 'paypal' }, tillToken)
       assert.equal(created.status, 201, JSON.stringify(created.body))
       assert.equal(created.body.url, 'https://sandbox.paypal.test/checkoutnow?token=ORDER1')
       const order = paypal.order('ORDER1')
       assert.deepEqual(order.purchase_units[0].amount, { currency_code: 'USD', value: '7.25' })
+      // Paid to the shop's own PayPal, with Tilltide's 0.5% (rounded down to whole cents) and partner code.
+      assert.deepEqual(order.purchase_units[0].payee, { merchant_id: 'SHOPPAYPAL1' })
+      assert.deepEqual(order.purchase_units[0].payment_instruction, { platform_fees: [{ amount: { currency_code: 'USD', value: '0.03' } }] })
+      assert.equal(order.bnCode, 'Tilltide_SP')
       assert.equal((await api('GET', `/shop/payments/${created.body.id}`, undefined, tillToken)).body.status, 'pending')
 
       paypal.approve('ORDER1')
@@ -755,6 +788,9 @@ async function main() {
       assert.equal(paypal.refunds().length, 1)
       assert.deepEqual(paypal.refunds()[0].amount, { value: '2.00', currency_code: 'USD' })
       assert.equal(paypal.refunds()[0].capture, 'CAP-ORDER1')
+      // Refunded on the shop's behalf, from its PayPal.
+      const assertion = paypal.refundHeaders().at(-1)!.assertion!
+      assert.deepEqual(JSON.parse(Buffer.from(assertion.split('.')[1]!, 'base64url').toString()), { iss: 'mock', payer_id: 'SHOPPAYPAL1' })
 
       // The rest can still be refunded, but no more than that.
       assert.match((await run({ payment_id: creamTea, amount: '5.26', reason: 'x' })).error, /Only 5.25 USD/)
@@ -924,6 +960,39 @@ async function main() {
       const created = await api('POST', '/shop/payments', { amount: '1' }, tillToken)
       await sql`update payments set created_at = now() - interval '31 minutes' where id = ${created.body.id}`
       await until('expired', async () => (await sql`select status from payments where id = ${created.body.id}`)[0]!.status === 'expired')
+    })
+
+    await step('PayPal loyalty: PayPal customers earn points, get a code on the receipt, and spend it on a PayPal bill', async () => {
+      const creamTea = (await sql<any[]>`select id from payments where label = 'Cream tea'`)[0].id
+      const receipt = await fetch(`${API}/r/${creamTea}`).then((r) => r.text())
+      const code = receipt.match(/<strong[^>]*>([A-Z0-9]{5}-[A-Z0-9]{5})<\/strong>/)?.[1]
+      assert.ok(code, 'receipt shows a loyalty code')
+      assert.match(receipt, /Your points at Pasty Shop/)
+      const { ledgerBalance } = await import('../../src/services/paypal-loyalty')
+      const shopId = (await api('GET', '/shop', undefined, tillToken)).body.id
+      const before = await ledgerBalance(shopId, 'paypal:BUYER1')
+      assert.equal(before, 7n + 3n + 20n, 'points from the three PayPal sales')
+
+      await api('PATCH', '/shop', { pointValue: '0.10' }, tillToken)
+      const unknown = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: 'ZZZZZ-ZZZZZ' }, tillToken)
+      assert.equal(unknown.status, 400)
+      // 30 points x 0.10 = 3.00 off a 10.00 bill (cap 50%). The code is case and dash insensitive.
+      const sale = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code!.toLowerCase().replace('-', '') }, tillToken)
+      assert.equal(sale.status, 201, JSON.stringify(sale.body))
+      assert.equal(sale.body.pointsRedeemed, '30')
+      assert.equal(sale.body.discount, '3000000')
+      const orderId = new URL(sale.body.url).searchParams.get('token')!
+      assert.equal(paypal.order(orderId).purchase_units[0].amount.value, '7.00')
+      // The points are held by the open sale: a second sale with the same code gets none.
+      assert.equal(await ledgerBalance(shopId, 'paypal:BUYER1'), 0n)
+      const second = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code }, tillToken)
+      assert.equal(second.body.pointsRedeemed, '0')
+
+      paypal.approve(orderId)
+      await waitFor(tillToken, sale.body.id, (p) => p.status === 'paid', 'loyalty sale paid')
+      // Earned on the 7.00 actually paid.
+      await until('ledger points', async () => (await ledgerBalance(shopId, 'paypal:BUYER1')) === 7n)
+      await api('PATCH', '/shop', { pointValue: '0.01' }, tillToken)
     })
 
     await step('migrations re-run cleanly on a database with every sweep status', async () => {

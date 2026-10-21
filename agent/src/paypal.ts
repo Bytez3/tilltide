@@ -9,6 +9,8 @@ export interface PayPalConfig {
   env: 'sandbox' | 'live'
   /** Override the API host, e.g. to point at a local mock in tests. */
   apiBase?: string
+  /** PayPal partner attribution (BN) code, sent on every call when Tilltide acts as a platform. */
+  bnCode?: string
 }
 
 export type OrderStatus = 'CREATED' | 'SAVED' | 'APPROVED' | 'VOIDED' | 'COMPLETED' | 'PAYER_ACTION_REQUIRED'
@@ -52,6 +54,10 @@ export interface CreateOrderInput {
   brandName: string
   returnUrl: string
   cancelUrl: string
+  /** The shop's own PayPal account. Without it the payment goes to the account that owns these API keys. */
+  payee?: { merchantId?: string; email?: string }
+  /** Tilltide's platform fee, taken from the payment by PayPal (needs partner status with PayPal). */
+  platformFee?: { value: string; currency: string }
 }
 
 export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch = fetch) {
@@ -74,7 +80,7 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
     return token.value
   }
 
-  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, requestId?: string): Promise<T> {
+  async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown, requestId?: string, extraHeaders: Record<string, string> = {}): Promise<T> {
     const res = await fetchImpl(`${base}${path}`, {
       method,
       headers: {
@@ -82,6 +88,8 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
         'content-type': 'application/json',
         prefer: 'return=representation',
         ...(requestId ? { 'paypal-request-id': requestId } : {}),
+        ...(config.bnCode ? { 'paypal-partner-attribution-id': config.bnCode } : {}),
+        ...extraHeaders,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     })
@@ -102,6 +110,14 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
               reference_id: input.referenceId,
               description: input.description,
               amount: { currency_code: input.currency, value: input.value },
+              ...(input.payee?.merchantId
+                ? { payee: { merchant_id: input.payee.merchantId } }
+                : input.payee?.email
+                  ? { payee: { email_address: input.payee.email } }
+                  : {}),
+              ...(input.platformFee
+                ? { payment_instruction: { platform_fees: [{ amount: { currency_code: input.platformFee.currency, value: input.platformFee.value } }] } }
+                : {}),
             },
           ],
           payment_source: {
@@ -123,12 +139,50 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
      * Refunds all or part of a capture. `requestId` makes it idempotent: retrying with the same id
      * returns the original refund instead of refunding twice.
      */
-    refundCapture: (captureId: string, amount: { value: string; currency: string }, requestId: string, noteToPayer?: string) =>
+    refundCapture: (
+      captureId: string,
+      amount: { value: string; currency: string },
+      requestId: string,
+      noteToPayer?: string,
+      /** The connected shop's PayPal merchant id: the refund is made on its behalf. */
+      onBehalfOf?: string,
+    ) =>
       call<PayPalRefund>(
         'POST',
         `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`,
         { amount: { value: amount.value, currency_code: amount.currency }, ...(noteToPayer ? { note_to_payer: noteToPayer.slice(0, 255) } : {}) },
         requestId,
+        onBehalfOf ? { 'paypal-auth-assertion': authAssertion(config.clientId, onBehalfOf) } : {},
+      ),
+    /** Starts PayPal onboarding for a shop. Returns the link the owner opens to connect their PayPal. */
+    createPartnerReferral: async (trackingId: string, returnUrl: string) => {
+      const res = await call<{ links?: { rel: string; href: string }[] }>('POST', '/v2/customer/partner-referrals', {
+        tracking_id: trackingId,
+        partner_config_override: { return_url: returnUrl },
+        operations: [
+          {
+            operation: 'API_INTEGRATION',
+            api_integration_preference: {
+              rest_api_integration: {
+                integration_method: 'PAYPAL',
+                integration_type: 'THIRD_PARTY',
+                third_party_details: { features: ['PAYMENT', 'REFUND', 'PARTNER_FEE'] },
+              },
+            },
+          },
+        ],
+        products: ['EXPRESS_CHECKOUT'],
+        legal_consents: [{ type: 'SHARE_DATA_CONSENT', granted: true }],
+      })
+      const link = res.links?.find((l) => l.rel === 'action_url')?.href
+      if (!link) throw new PayPalError('PayPal did not return an onboarding link', 502)
+      return link
+    },
+    /** Whether a shop finished onboarding and can take payments, looked up by our tracking id. */
+    getMerchantIntegration: (partnerMerchantId: string, trackingId: string) =>
+      call<{ merchant_id?: string; tracking_id?: string; payments_receivable?: boolean; primary_email_confirmed?: boolean }>(
+        'GET',
+        `/v1/customer/partners/${encodeURIComponent(partnerMerchantId)}/merchant-integrations?tracking_id=${encodeURIComponent(trackingId)}`,
       ),
     getRefund: (id: string) => call<PayPalRefund>('GET', `/v2/payments/refunds/${encodeURIComponent(id)}`),
     captureOrder: (id: string) =>
@@ -146,4 +200,10 @@ export function approvalUrl(order: PayPalOrder): string | null {
 export function completedCapture(order: PayPalOrder) {
   const capture = order.purchase_units?.[0]?.payments?.captures?.[0]
   return order.status === 'COMPLETED' && capture?.status === 'COMPLETED' ? capture : null
+}
+
+/** PayPal-Auth-Assertion: lets a platform act on behalf of a connected merchant (unsigned JWT, per PayPal docs). */
+export function authAssertion(clientId: string, merchantId: string): string {
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url')
+  return `${b64({ alg: 'none' })}.${b64({ iss: clientId, payer_id: merchantId })}.`
 }

@@ -49,6 +49,9 @@ export function startMockPayPal(port: number) {
     pendingRefunds: false, // new refunds start PENDING
   }
   const refundsByRequestId = new Map<string, any>()
+  // Partner onboarding: tracking id (our merchant id) -> PayPal merchant id once "completed".
+  const onboarded = new Map<string, string>()
+  const refundHeaders: Record<string, string | undefined>[] = []
   const server = createServer(async (req, res) => {
     let body = ''
     for await (const chunk of req) body += chunk
@@ -58,6 +61,17 @@ export function startMockPayPal(port: number) {
     }
     const url = new URL(req.url!, 'http://x')
     if (url.pathname === '/v1/oauth2/token') return send(200, { access_token: 'mock', expires_in: 3600 })
+    if (req.method === 'POST' && url.pathname === '/v2/customer/partner-referrals') {
+      const input = JSON.parse(body)
+      return send(201, { links: [{ rel: 'action_url', href: `https://sandbox.paypal.test/onboard?tracking=${input.tracking_id}&return=${encodeURIComponent(input.partner_config_override.return_url)}` }] })
+    }
+    const integration = url.pathname.match(/^\/v1\/customer\/partners\/([^/]+)\/merchant-integrations$/)
+    if (req.method === 'GET' && integration) {
+      const merchantId = onboarded.get(url.searchParams.get('tracking_id') ?? '')
+      return merchantId
+        ? send(200, { merchant_id: merchantId, tracking_id: url.searchParams.get('tracking_id'), payments_receivable: true, primary_email_confirmed: true })
+        : send(404, { message: 'not found' })
+    }
     if (req.method === 'POST' && url.pathname === '/v2/checkout/orders') {
       const input = JSON.parse(body)
       const id = `ORDER${++n}`
@@ -65,6 +79,7 @@ export function startMockPayPal(port: number) {
         id,
         status: 'PAYER_ACTION_REQUIRED',
         purchase_units: input.purchase_units,
+        bnCode: req.headers['paypal-partner-attribution-id'],
         links: [{ rel: 'payer-action', href: `https://sandbox.paypal.test/checkoutnow?token=${id}` }],
       }
       orders.set(id, order)
@@ -73,6 +88,7 @@ export function startMockPayPal(port: number) {
     const refundMatch = url.pathname.match(/^\/v2\/payments\/captures\/([^/]+)\/refund$/)
     if (req.method === 'POST' && refundMatch) {
       state.refundCalls++
+      refundHeaders.push({ assertion: req.headers['paypal-auth-assertion'] as string | undefined })
       if (state.failNextRefund) {
         state.failNextRefund = false
         return send(503, { message: 'Service unavailable' })
@@ -125,6 +141,9 @@ export function startMockPayPal(port: number) {
     releaseReview: (id: string) => (orders.get(id).purchase_units[0].payments.captures[0].status = 'COMPLETED'),
     order: (id: string) => orders.get(id),
     refunds: () => [...refundsByRequestId.values()],
+    refundHeaders: () => refundHeaders,
+    /** The owner finishes PayPal onboarding for this tracking id. */
+    completeOnboarding: (trackingId: string, merchantId: string) => onboarded.set(trackingId, merchantId),
     completePendingRefunds: () => {
       for (const r of refundsByRequestId.values()) if (r.status === 'PENDING') r.status = 'COMPLETED'
     },

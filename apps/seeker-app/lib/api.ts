@@ -14,6 +14,13 @@ export interface Merchant {
   /** What one point is worth when spent, e.g. "0.01". */
   pointValue: string
   redeemMaxPercent: number
+  paypal: {
+    status: 'none' | 'pending' | 'connected'
+    email: string | null
+    onboardingAvailable: boolean
+    required: boolean
+    feePercent: number
+  }
 }
 
 export type Rail = 'solana' | 'paypal'
@@ -136,11 +143,17 @@ export const api = {
 
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),
-  updateShop: (patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent'>>) =>
+  updateShop: (
+    patch: Partial<Pick<Merchant, 'name' | 'ownerWallet' | 'pointsPerUnit' | 'token' | 'pointValue' | 'redeemMaxPercent'>> & {
+      paypalEmail?: string | null
+    },
+  ) =>
     request<Merchant>('/shop', { method: 'PATCH', body: JSON.stringify(patch) }),
 
-  createPayment: (amount: string, rail: Rail = 'solana', usePoints = false, label?: string) =>
-    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, label })),
+  createPayment: (amount: string, rail: Rail = 'solana', usePoints = false, loyaltyCode?: string) =>
+    request<Payment & { url: string }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode })),
+  connectPayPal: () => request<{ url: string }>('/shop/paypal/connect', post()),
+  refreshPayPal: () => request<Merchant>('/shop/paypal/refresh', post()),
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
@@ -169,6 +182,7 @@ export const api = {
     airdrop: (address: string) => request<{ ok: true }>('/sandbox/airdrop', post({ address })),
     pay: (url: string, amount?: string) => request<{ ok: true; signature?: string; message?: string }>('/sandbox/pay', post({ url, amount })),
     approvePayPal: (url: string) => request<{ ok: true }>('/sandbox/paypal/approve', post({ url })),
+    finishPayPalOnboarding: (url: string) => request<{ ok: true }>('/sandbox/paypal/onboard', post({ url })),
   },
 
   getPoints: (wallet: string) => request<{ points: string; configured: boolean }>(`/points/${wallet}`),

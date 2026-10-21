@@ -84,6 +84,9 @@ Object.assign(process.env, {
   POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
   TREASURY_WALLET: treasury.address,
   SWEEP_FEE_BPS: '50',
+  PAYPAL_PARTNER_MERCHANT_ID: 'TILLTIDE-SANDBOX-PARTNER',
+  PAYPAL_REQUIRE_CONNECTED: 'true',
+  PAYPAL_FEE_BPS: '50',
   PAYPAL_CLIENT_ID: 'sandbox',
   PAYPAL_CLIENT_SECRET: 'sandbox',
   PAYPAL_API_BASE: `http://127.0.0.1:${PAYPAL_PORT}`,
@@ -183,6 +186,16 @@ app.post('/sandbox/pay', async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)
   }
+})
+
+/** The shop owner finishes PayPal onboarding (in real life this happens on paypal.com). */
+app.post('/sandbox/paypal/onboard', async (c) => {
+  const { url } = await c.req.json<{ url: string }>()
+  const tracking = new URL(url).searchParams.get('tracking')
+  if (!tracking) return c.json({ error: 'Not an onboarding link' }, 400)
+  paypal.completeOnboarding(tracking, `SANDBOX-${tracking.slice(0, 8).toUpperCase()}`)
+  await fetch(`http://localhost:${API_PORT}/paypal/onboarded?merchantId=${tracking}`)
+  return c.json({ ok: true })
 })
 
 /** The customer approves a PayPal checkout (the stand-in PayPal then lets the API capture it). */

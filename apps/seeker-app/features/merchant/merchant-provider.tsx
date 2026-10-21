@@ -13,6 +13,8 @@ interface MerchantContextValue {
   /** Sign In With Solana over MWA, then register the shop if it's new. */
   signInAndSetUp: (shopName: string) => Promise<void>
   update: (patch: Parameters<typeof api.updateShop>[0]) => Promise<void>
+  /** Replace the cached shop (e.g. after re-checking PayPal). */
+  replace: (merchant: Merchant) => void
   signOut: () => Promise<void>
 }
 
@@ -96,7 +98,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   }, [account?.address, clearSession, disconnect])
 
   return (
-    <MerchantContext.Provider value={{ merchant, loading, signInAndSetUp, update, signOut }}>{children}</MerchantContext.Provider>
+    <MerchantContext.Provider value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant }}>{children}</MerchantContext.Provider>
   )
 }
 

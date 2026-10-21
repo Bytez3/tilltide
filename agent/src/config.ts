@@ -31,8 +31,18 @@ export const config = {
           clientSecret: process.env.PAYPAL_CLIENT_SECRET,
           env: (process.env.PAYPAL_ENV === 'live' ? 'live' : 'sandbox') as 'sandbox' | 'live',
           apiBase: process.env.PAYPAL_API_BASE,
+          bnCode: process.env.PAYPAL_BN_CODE || undefined,
         }
       : null,
+  /**
+   * Tilltide as a PayPal platform: our partner merchant id (from PayPal) turns on shop onboarding and
+   * platform fees. Live mode refuses PayPal sales for shops that haven't connected their own PayPal.
+   */
+  paypalPlatform: {
+    partnerMerchantId: process.env.PAYPAL_PARTNER_MERCHANT_ID || null,
+    feeBps: Number(process.env.PAYPAL_FEE_BPS ?? 50),
+    requireConnected: (process.env.PAYPAL_REQUIRE_CONNECTED ?? (process.env.PAYPAL_ENV === 'live' ? 'true' : 'false')) === 'true',
+  },
   /** Currency PayPal orders are taken in. USD keeps the ledger 1:1 with USDC/PYUSD. */
   paypalCurrency: process.env.PAYPAL_CURRENCY ?? 'USD',
   agent: {

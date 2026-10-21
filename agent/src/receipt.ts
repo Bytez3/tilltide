@@ -5,6 +5,7 @@ import { fromBaseUnits } from '@tilltide/agent-pay-kit'
 import { config } from './config'
 import { LEDGER_DECIMALS, sql, type PaymentRow } from './db'
 import { rpc } from './solana'
+import { codeFor, ledgerBalance } from './services/paypal-loyalty'
 
 async function pointsBalance(wallet: string): Promise<string | null> {
   if (!config.pointsMint) return null
@@ -35,6 +36,11 @@ export async function renderReceipt(paymentId: string) {
   const isSolana = payment.rail === 'solana' && payment.payer
   const balance = isSolana ? await pointsBalance(payment.payer!) : null
   const earned = payment.pointsStatus === 'issued' && payment.points ? payment.points.toString() : null
+  // PayPal customers: points live in Tilltide's ledger, spent with a loyalty code.
+  const paypalLoyalty =
+    payment.rail === 'paypal' && payment.payer
+      ? { balance: (await ledgerBalance(payment.merchantId, payment.payer)).toString(), code: await codeFor(payment.merchantId, payment.payer) }
+      : null
   const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`
   const explorer = (sig: string) =>
     `https://explorer.solana.com/tx/${sig}${config.cluster === 'devnet' ? '?cluster=devnet' : ''}`
@@ -65,18 +71,23 @@ export async function renderReceipt(paymentId: string) {
     <div class="amount">${amount} ${payment.rail === 'paypal' ? 'USD' : payment.tokenSymbol}</div>
     <div class="paid">Paid ✓${payment.rail === 'paypal' ? ' with PayPal' : ''}</div>
   </div>
-  <div class="card">
+  ${
+    payment.label || isSolana || payment.discount > 0n || refunded?.total || payment.signature
+      ? html`<div class="card">
     ${payment.label ? html`<div class="row"><span class="muted">For</span><span>${payment.label}</span></div>` : ''}
     ${
-      payment.discount > 0n
+      payment.discount > 0n && payment.rail === 'solana'
         ? html`<div class="row"><span class="muted">Points used</span><span>${payment.pointsRedeemed.toString()} (−${Number(fromBaseUnits(payment.discount, LEDGER_DECIMALS)).toFixed(2)})</span></div>
     <div class="row"><span class="muted">You paid</span><span>${Number(fromBaseUnits(payment.amount - payment.discount, LEDGER_DECIMALS)).toFixed(2)} ${payment.tokenSymbol}</span></div>`
         : ''
     }
     ${isSolana ? html`<div class="row"><span class="muted">Paid from</span><span>${short(payment.payer!)}</span></div>` : ''}
+    ${payment.discount > 0n && payment.rail === 'paypal' ? html`<div class="row"><span class="muted">Points used</span><span>${payment.pointsRedeemed.toString()} (−${Number(fromBaseUnits(payment.discount, LEDGER_DECIMALS)).toFixed(2)})</span></div>` : ''}
     ${refunded?.total ? html`<div class="row"><span class="muted">Refunded</span><span>${Number(fromBaseUnits(refunded.total, LEDGER_DECIMALS)).toFixed(2)} USD</span></div>` : ''}
     ${payment.signature ? html`<div class="row"><span class="muted">Transaction</span><a href="${explorer(payment.signature)}" rel="noopener">${short(payment.signature)}</a></div>` : ''}
-  </div>
+  </div>`
+      : ''
+  }
   ${
     isSolana && balance !== null
       ? html`<div class="card">
@@ -84,8 +95,14 @@ export async function renderReceipt(paymentId: string) {
     <div class="points">${balance}</div>
     ${earned ? html`<div class="muted">+${earned} from this visit</div>` : html`<div class="muted">Points from this visit are on their way.</div>`}
   </div>`
-      : payment.rail === 'paypal'
-        ? html`<div class="card muted">Pay with a Solana wallet next time to earn loyalty points.</div>`
+      : paypalLoyalty
+        ? html`<div class="card">
+    <div class="muted">Your points at ${payment.shopName}</div>
+    <div class="points">${paypalLoyalty.balance}</div>
+    ${earned ? html`<div class="muted">+${earned} from this visit</div>` : ''}
+    <div class="row" style="margin-top:12px"><span class="muted">Your loyalty code</span><strong style="letter-spacing:1px">${paypalLoyalty.code}</strong></div>
+    <div class="muted">Show this code next time you pay with PayPal to spend your points.</div>
+  </div>`
         : ''
   }
   <p class="muted" style="text-align:center">Powered by Tilltide</p>

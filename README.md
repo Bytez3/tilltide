@@ -1,10 +1,12 @@
 # Tilltide
 
-A mobile-first AI payments agent for small businesses on Solana.
+A PayPal-first till and AI back office for small shops, with PayPal USD on Solana.
 
 *Till* — the shop counter. *Tide* — payments flowing in and out on their own, from the Cornish coast to anywhere.
 
-A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers pay from any Solana wallet and earn onchain loyalty points, or pay with PayPal if they don't have a wallet. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
+A shop runs its till on a Solana Seeker or any Android phone.
+- **Paying:** most customers pay with PayPal or a card by scanning a PayPal checkout QR. The money goes straight to the shop's own PayPal account. Customers with a Solana wallet pay in PYUSD (PayPal's stablecoin) or USDC instead.
+- **Loyalty:** every customer earns points and can spend them at the till. Wallet customers' points are held onchain. PayPal customers' points are kept in Tilltide's ledger and spent with the loyalty code on their receipt. An AI agent reconciles the takings, answers "how did we do today?", and suggests moving money to the owner, who approves every transfer with a tap. The payments and agent layer underneath is an open-source kit.
 
 ## Repo
 
@@ -26,7 +28,12 @@ A shop takes USDC or PYUSD on a Solana Seeker (or any Android phone). Customers 
 
 **Receipts.** After a sale the till shows a receipt QR. The customer's receipt page (`/r/<id>`) shows what they paid, the points they used and earned, and their points balance.
 
-**PayPal rail.** For customers without a crypto wallet, the merchant flips Charge to *PayPal*. The API creates a PayPal order (Orders v2) and the QR opens PayPal's checkout, where the customer pays with PayPal or a card. The order is captured when PayPal sends them back, or by the watcher if they close the page, and the sale lands in the same ledger. PayPal takings settle to the shop's PayPal balance and don't earn points yet.
+**PayPal first.** The till opens on PayPal.
+- **The shop's own account:** each shop connects its own PayPal through PayPal's Partner Referrals onboarding. The connection is confirmed by asking PayPal directly, never from the return link alone.
+- **Each sale:** a PayPal Orders v2 order with the shop as `payee` and Tilltide's 0.5% in `platform_fees`. The QR opens PayPal checkout, where the customer pays with PayPal or a card. The order is captured when PayPal sends the customer back, or by the watcher if they close the page.
+- **Refunds:** made on the shop's behalf (`PayPal-Auth-Assertion`).
+- **Not connected:** in live mode PayPal sales are refused until the shop connects. Without partner status, a shop can instead name a PayPal email to be paid to, with no Tilltide fee.
+- **Loyalty:** PayPal customers earn ledger points, and the loyalty code on their receipt spends them on a later PayPal bill. Points held by an open sale can't be spent twice.
 
 **Sign-in.** The merchant signs in with the till wallet using Sign In With Solana over Mobile Wallet Adapter. The API checks the signature and a one-time nonce, then issues a session token. Every shop route lives under `/shop` and only ever sees the signed-in wallet's shop.
 
@@ -70,7 +77,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 30 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 32 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.

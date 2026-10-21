@@ -5,6 +5,7 @@ import {
   encodeTransferRequest,
   fromBaseUnits,
   getIssuePointsInstructions,
+  sweepFee,
   type VerifiedPayment,
 } from '@tilltide/agent-pay-kit'
 // SKR bonus (Seeker holders) arrives after Breakpoint; until then every customer earns the base rate.
@@ -12,6 +13,8 @@ import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
+import { ledgerBalance, payerForCode, planPayPalRedemption } from './paypal-loyalty'
+import { paypalPayee } from './paypal-onboarding'
 import { merchantToken } from './merchants'
 
 export async function createPayment(merchant: MerchantRow, amount: bigint, label?: string, allowPoints = false) {
@@ -43,31 +46,64 @@ export function getPayPal(): PayPalClient | null {
 }
 
 /** PayPal checkout for customers without a crypto wallet. The QR opens PayPal's approval page. */
-export async function createPayPalPayment(merchant: MerchantRow, amount: bigint, label?: string) {
+export class PayPalSaleError extends Error {}
+
+/**
+ * PayPal checkout. The sale goes to the shop's own PayPal (connected via onboarding, or a named PayPal
+ * email), with Tilltide's platform fee when the shop is connected. With a loyalty code, the customer's
+ * ledger points come off the bill and are held for this sale until it's paid or expires.
+ */
+export async function createPayPalPayment(merchant: MerchantRow, amount: bigint, label?: string, loyaltyCode?: string) {
   const paypal = getPayPal()
-  if (!paypal) throw new Error('PayPal is not configured on the server')
-  const [payment] = await sql<PaymentRow[]>`
-    insert into payments (merchant_id, rail, amount, token_symbol, label)
-    values (${merchant.id}, 'paypal', ${amount.toString()}, 'USD', ${label ?? null})
-    returning *`
+  if (!paypal) throw new PayPalSaleError('PayPal is not configured on the server')
+  const { payee, feeAllowed } = paypalPayee(merchant)
+  if (!payee && config.paypalPlatform.requireConnected) {
+    throw new PayPalSaleError('Connect your PayPal in Settings before taking PayPal payments')
+  }
+
+  const payment = await sql.begin(async (tx) => {
+    let redemption = { points: 0n, discount: 0n, toPay: amount }
+    let loyaltyKey: string | null = null
+    if (loyaltyCode) {
+      loyaltyKey = await payerForCode(merchant.id, loyaltyCode)
+      if (!loyaltyKey) throw new PayPalSaleError('That loyalty code is not recognised at this shop')
+      // One sale at a time per customer, so the same points can't be held by two open sales.
+      await tx`select pg_advisory_xact_lock(hashtext(${`${merchant.id}:${loyaltyKey}`}))`
+      redemption = planPayPalRedemption(amount, await ledgerBalance(merchant.id, loyaltyKey, tx as never), merchant)
+    }
+    const fee =
+      feeAllowed && config.paypalPlatform.partnerMerchantId && config.paypalPlatform.feeBps > 0
+        ? (sweepFee(redemption.toPay, config.paypalPlatform.feeBps) / 10_000n) * 10_000n // whole cents
+        : 0n
+    const [row] = await tx<PaymentRow[]>`
+      insert into payments (merchant_id, rail, amount, token_symbol, label, points_redeemed, discount, loyalty_key, paypal_fee)
+      values (${merchant.id}, 'paypal', ${amount.toString()}, 'USD', ${label ?? null}, ${redemption.points.toString()},
+        ${redemption.discount.toString()}, ${redemption.points > 0n ? loyaltyKey : null}, ${fee.toString()})
+      returning *`
+    return row!
+  })
+
+  const cents = (units: bigint) => Number(fromBaseUnits(units, LEDGER_DECIMALS)).toFixed(2)
   try {
     const order = await paypal.createOrder({
-      referenceId: payment!.id,
-      // PayPal takes 2-decimal currency; amounts with finer precision are rejected upstream.
-      value: Number(fromBaseUnits(amount, LEDGER_DECIMALS)).toFixed(2),
+      referenceId: payment.id,
+      value: cents(payment.amount - payment.discount),
       currency: config.paypalCurrency,
-      description: label,
+      description: payment.discount > 0n ? `${label ?? 'Sale'} (${payment.pointsRedeemed} points used)` : label,
       brandName: merchant.name,
       returnUrl: `${config.publicUrl}/paypal/return`,
       cancelUrl: `${config.publicUrl}/paypal/cancel`,
+      payee,
+      platformFee: payment.paypalFee > 0n ? { value: cents(payment.paypalFee), currency: config.paypalCurrency } : undefined,
     })
     const url = approvalUrl(order)
     if (!url) throw new Error('PayPal did not return an approval link')
     const [updated] = await sql<PaymentRow[]>`
-      update payments set paypal_order_id = ${order.id} where id = ${payment!.id} returning *`
+      update payments set paypal_order_id = ${order.id} where id = ${payment.id} returning *`
     return { payment: updated!, url }
   } catch (err) {
-    await sql`update payments set status = 'failed', failure_reason = ${(err as Error).message} where id = ${payment!.id}`
+    // Releases any held points too (failed sales don't count against the balance).
+    await sql`update payments set status = 'failed', failure_reason = ${(err as Error).message} where id = ${payment.id}`
     throw err
   }
 }
@@ -109,6 +145,7 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
       update payments set status = 'paid', paypal_capture_id = ${capture.id}, paid_at = now(), failure_reason = null,
         payer = ${order.payer?.payer_id ? `paypal:${order.payer.payer_id}` : null}
       where id = ${payment.id} and status in ('pending', 'expired')`
+    await issuePointsForPayment(payment.id).catch((err) => console.error(`Ledger points for ${payment.id} failed`, err))
     return true
   }
   if (order.status === 'VOIDED') {
@@ -184,8 +221,20 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   let payment = await getPayment(paymentId)
   if (!payment) return { issued: false, reason: 'Payment not found' }
   if (payment.status !== 'paid') return { issued: false, reason: `Payment is ${payment.status}, not paid` }
-  if (payment.rail !== 'solana') return { issued: false, reason: 'PayPal customers have no wallet to hold points yet' }
-  if (!payment.payer) return { issued: false, reason: 'Payer wallet is unknown' }
+  if (!payment.payer) return { issued: false, reason: 'Payer is unknown' }
+  if (payment.rail === 'paypal') {
+    // PayPal customers' points live in the ledger (see paypal-loyalty.ts); nothing to mint onchain.
+    const [m] = await sql<MerchantRow[]>`select * from merchants where id = ${payment.merchantId}`
+    const earned = calculatePoints(payment.amount - payment.discount, LEDGER_DECIMALS, {
+      pointsPerUnit: Number(m!.pointsPerUnit),
+      bonusMultiplier: Number(m!.bonusMultiplier),
+    })
+    const [row] = await sql`
+      update payments set points = ${earned.toString()}, points_status = ${earned > 0n ? 'issued' : 'none'}
+      where id = ${payment.id} and points_status is null returning id`
+    if (!row) return { issued: false, reason: 'Points were already issued for this payment' }
+    return { issued: true, points: earned, signature: null }
+  }
   if (payment.pointsStatus === 'issued' || payment.pointsStatus === 'none') {
     return { issued: false, reason: 'Points were already issued for this payment' }
   }
@@ -254,6 +303,7 @@ export function serializePayment(p: PaymentRow) {
     allowPoints: p.allowPoints,
     pointsRedeemed: p.pointsRedeemed.toString(),
     discount: p.discount.toString(),
+    paypalFee: p.paypalFee.toString(),
     pointsIssued: p.pointsStatus === 'issued',
     createdAt: p.createdAt.toISOString(),
     paidAt: p.paidAt?.toISOString() ?? null,

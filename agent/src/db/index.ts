@@ -25,6 +25,10 @@ export interface MerchantRow {
   pointValue: bigint
   /** The most of a bill (percent) that points can pay for. */
   redeemMaxPercent: number
+  /** The shop's own PayPal (partner onboarding), or an email to pay; 'connected' once verified with PayPal. */
+  paypalMerchantId: string | null
+  paypalEmail: string | null
+  paypalStatus: 'none' | 'pending' | 'connected'
   createdAt: Date
 }
 
@@ -57,6 +61,10 @@ export interface PaymentRow {
   pointsRedeemed: bigint
   /** Part of `amount` covered by points. The till received amount - discount. */
   discount: bigint
+  /** Tilltide's platform fee on a PayPal sale (6-decimal units). */
+  paypalFee: bigint
+  /** For PayPal loyalty: whose points this sale spends ('paypal:<payer id>'). */
+  loyaltyKey: string | null
 }
 
 /** Ledger amounts use 6 decimals on every rail (USDC and PYUSD are 6; PayPal USD is scaled up). */

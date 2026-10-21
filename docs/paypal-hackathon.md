@@ -4,6 +4,12 @@ Deadline: **Nov 12, 2026, 12pm PST.** The brief asks for a working prototype tha
 
 ## How Tilltide fits
 
+**Tilltide is PayPal-first.** PayPal is the default way to pay at the till, each shop is onboarded as a PayPal merchant with Tilltide as the platform, and PayPal's stablecoin PYUSD is the default for wallet payments.
+
+- **PayPal Partner Referrals onboarding.** Each shop connects its own PayPal, and Tilltide confirms the connection with PayPal's merchant-integrations API. Code: `agent/src/services/paypal-onboarding.ts`.
+- **Platform model.** Every PayPal order names the shop as `payee` and carries Tilltide's fee in `payment_instruction.platform_fees`, with the partner attribution (BN) code. That's how Tilltide earns, and it pays for the AI.
+- **PayPal loyalty.** PayPal customers earn points and spend them with a code from their receipt. Points held by an open order can't be spent twice. Code: `agent/src/services/paypal-loyalty.ts`.
+
 - **PayPal Orders v2 checkout** as a second payment rail. A customer without a crypto wallet scans the same till QR and pays with PayPal or a card. Code: `agent/src/paypal.ts`, `agent/src/services/payments.ts`.
 - **PYUSD on Solana.** A shop can take PayPal's stablecoin instead of USDC (Settings → token). Code: `packages/agent-pay-kit/src/tokens.ts`.
 - **AI agent across both rails.** Claude, with tool use, reconciles crypto and PayPal takings in one ledger. It answers "what did I take today?" and proposes sweeps that the owner approves. Code: `agent/src/agent/index.ts`.
