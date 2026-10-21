@@ -1,11 +1,16 @@
+import { readFileSync } from 'node:fs'
 import Anthropic from '@anthropic-ai/sdk'
 import { address, isAddress, isSignature, type Signature } from '@solana/kit'
 import { toBaseUnits } from '@tilltide/agent-pay-kit'
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
 import { Hono } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
+import { secureHeaders } from 'hono/secure-headers'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
+import { clientIp, rateLimit } from './rate-limit'
+import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
 import { config } from './config'
 import { isDate } from './dates'
@@ -56,6 +61,12 @@ function serializeMerchant(m: MerchantRow) {
 
 export const app = new Hono()
 
+app.use(secureHeaders())
+// Every request body here is small JSON; refuse anything big before parsing it.
+app.use(bodyLimit({ maxSize: 64 * 1024, onError: (c) => c.json({ error: 'Request too large' }, 413) }))
+app.use('*', rateLimit({ name: 'ip', windowMs: 60_000, max: config.rateLimits.perIp, key: clientIp }))
+app.use('/auth/*', rateLimit({ name: 'auth', windowMs: 60_000, max: config.rateLimits.auth, key: clientIp }))
+
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ error: err.message }, err.status)
   console.error(err)
@@ -63,6 +74,23 @@ app.onError((err, c) => {
 })
 
 app.get('/health', (c) => c.json({ ok: true, cluster: config.cluster }))
+
+// The app's MWA identity points at this server: wallets load the icon from here and can check
+// the Android app against Digital Asset Links.
+const favicon = readFileSync(new URL('../public/favicon.png', import.meta.url))
+app.get('/favicon.png', (c) => c.body(favicon, 200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }))
+app.get('/.well-known/assetlinks.json', (c) =>
+  c.json(
+    config.androidCertSha256.length
+      ? [
+          {
+            relation: ['delegate_permission/common.handle_all_urls'],
+            target: { namespace: 'android_app', package_name: 'com.bytez3.tilltide', sha256_cert_fingerprints: config.androidCertSha256 },
+          },
+        ]
+      : [],
+  ),
+)
 
 // Customer-facing reads (points balance) are public; shop routes need a signed-in till wallet.
 app.get('/points/:wallet', async (c) => {
@@ -129,7 +157,7 @@ type ShopEnv = { Variables: { wallet: string; token: string } }
 const shop = new Hono<ShopEnv>()
 
 shop.use(async (c, next) => {
-  const token = c.req.header('authorization')?.match(/^Bearer (.+)$/)?.[1]
+  const token = c.req.header('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{20,100})$/)?.[1]
   const wallet = token ? await walletForToken(token) : null
   if (!wallet || !token) throw new HTTPException(401, { message: 'Sign in again' })
   c.set('wallet', wallet)
@@ -256,7 +284,7 @@ shop.get('/summary', async (c) => {
   })
 })
 
-shop.post('/chat', async (c) => {
+shop.post('/chat', rateLimit({ name: 'chat', windowMs: 60_000, max: 10, key: (c) => c.get('wallet') }), async (c) => {
   const merchant = await myShop(c)
   const input = await body(
     c,
@@ -269,8 +297,11 @@ shop.post('/chat', async (c) => {
     }),
   )
   try {
-    return c.json(await runAgent(merchant, input.messages))
+    await reserveAgentRequest(merchant)
+    const { usage: _usage, ...result } = await runAgent(merchant, input.messages)
+    return c.json(result)
   } catch (err) {
+    if (err instanceof UsageLimitError) throw new HTTPException(429, { message: err.message })
     if (err instanceof Anthropic.RateLimitError) throw new HTTPException(429, { message: 'The agent is busy, try again in a moment' })
     if (err instanceof Anthropic.APIConnectionError) throw new HTTPException(503, { message: 'Could not reach the agent' })
     if (err instanceof Anthropic.APIError) throw new HTTPException(502, { message: `Agent error: ${err.message}` })

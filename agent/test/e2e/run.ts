@@ -193,6 +193,10 @@ async function main() {
       PORT: String(API_PORT),
       POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
       AUTH_DOMAIN: 'tilltide.test',
+      RATE_LIMIT_AUTH: '1000',
+      RATE_LIMIT_PER_IP: '100000',
+      AGENT_DAILY_LIMIT: '2',
+      ANTHROPIC_API_KEY: '',
       PAYPAL_CLIENT_ID: 'mock',
       PAYPAL_CLIENT_SECRET: 'mock',
       PAYPAL_API_BASE: `http://127.0.0.1:${API_PORT + 12}`,
@@ -737,6 +741,23 @@ async function main() {
       assert.equal(ok.sweep.status, 'proposed', 'a proposal only; nothing moved')
       assert.equal(proposed.length, 1)
       assert.equal(await import('../../src/services/sweeps').then((m) => m.tillBalance(merchant)), before)
+    })
+
+    await step('agent chat is capped per shop per day; oversized requests are refused', async () => {
+      const chat = () => api('POST', '/shop/chat', { messages: [{ role: 'user', content: 'What did I take today?' }] }, tillToken)
+      // No Claude key in tests, so each call fails upstream, but still counts toward the cap.
+      assert.equal((await chat()).status, 503)
+      assert.equal((await chat()).status, 503)
+      const capped = await chat()
+      assert.equal(capped.status, 429)
+      assert.match(capped.body.error, /Daily agent limit/)
+
+      const huge = await api('POST', '/shop/payments', { amount: '1', label: 'x'.repeat(100_000) }, tillToken)
+      assert.equal(huge.status, 413)
+      assert.equal((await fetch(`${API}/favicon.png`)).headers.get('content-type'), 'image/png')
+      assert.deepEqual(await (await fetch(`${API}/.well-known/assetlinks.json`)).json(), [])
+      const headers = (await fetch(`${API}/health`)).headers
+      assert.equal(headers.get('x-content-type-options'), 'nosniff')
     })
 
     await step('watcher expires abandoned requests', async () => {

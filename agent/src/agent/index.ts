@@ -4,7 +4,9 @@ import { fromBaseUnits, toBaseUnits } from '@tilltide/agent-pay-kit'
 import { z } from 'zod'
 import { isDate } from '../dates'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SweepRow } from '../db'
+import { config } from '../config'
 import { merchantToken } from '../services/merchants'
+import { recordUsage } from '../services/usage'
 import { issuePointsForPayment, serializePayment } from '../services/payments'
 import { getDailySummary, reconcileDay, todayIn } from '../services/summary'
 import { proposeSweep, serializeSweep } from '../services/sweeps'
@@ -114,14 +116,22 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
 
   const context = `Shop: ${merchant.name}. Timezone ${merchant.timezone}; today is ${todayIn(merchant.timezone)}. Payment token ${token.symbol}. Points rate ${merchant.pointsPerUnit} per 1 ${token.symbol}. Owner wallet ${merchant.ownerWallet ? 'is set' : 'is NOT set'}.`
 
-  const final = await client.beta.messages.toolRunner({
-    model: 'claude-opus-5',
+  const model = config.agent.model
+  // Adaptive thinking, effort and server-side fallbacks exist on the current Opus/Sonnet/Fable models;
+  // Haiku 4.5 takes none of them.
+  const isHaiku = model.startsWith('claude-haiku')
+  const runner = client.beta.messages.toolRunner({
+    model,
     max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'medium' },
-    // Re-run on Anthropic's recommended fallback model if a safety classifier declines.
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
+    ...(isHaiku
+      ? {}
+      : {
+          thinking: { type: 'adaptive' as const },
+          output_config: { effort: config.agent.effort },
+          // Re-run on Anthropic's recommended fallback model if a safety classifier declines.
+          betas: ['server-side-fallback-2026-07-01'],
+          fallbacks: 'default' as const,
+        }),
     system: [
       { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
       { type: 'text', text: context },
@@ -131,8 +141,21 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
     messages: history.map((turn) => ({ role: turn.role, content: turn.content })),
   })
 
+  // Every model call in the loop is billed, so add up usage across all of them.
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }
+  let final: Awaited<ReturnType<typeof runner.done>> | undefined
+  for await (const message of runner) {
+    usage.inputTokens += message.usage.input_tokens
+    usage.outputTokens += message.usage.output_tokens
+    usage.cacheReadTokens += message.usage.cache_read_input_tokens ?? 0
+    usage.cacheWriteTokens += message.usage.cache_creation_input_tokens ?? 0
+    final = message
+  }
+  if (!final) throw new Error('Agent returned no message')
+  await recordUsage(merchant, model, usage)
+
   if (final.stop_reason === 'refusal') {
-    return { reply: "Sorry, I can't help with that one.", sweeps: proposed.map(serializeSweep) }
+    return { reply: "Sorry, I can't help with that one.", sweeps: proposed.map(serializeSweep), usage }
   }
   const reply = final.content
     .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
@@ -146,7 +169,8 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
           ? 'That answer got too long. Try asking about one day or one customer.'
           : "I couldn't finish working that out. Try a narrower question.",
       sweeps: proposed.map(serializeSweep),
+      usage,
     }
   }
-  return { reply, sweeps: proposed.map(serializeSweep) }
+  return { reply, sweeps: proposed.map(serializeSweep), usage }
 }

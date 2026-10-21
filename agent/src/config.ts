@@ -33,6 +33,19 @@ export const config = {
       : null,
   /** Currency PayPal orders are taken in. USD keeps the ledger 1:1 with USDC/PYUSD. */
   paypalCurrency: process.env.PAYPAL_CURRENCY ?? 'USD',
+  agent: {
+    model: process.env.AGENT_MODEL ?? 'claude-opus-5',
+    /** Chat questions are short lookups; low effort keeps answers fast and cheap. */
+    effort: (process.env.AGENT_EFFORT ?? 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
+    dailyLimit: Number(process.env.AGENT_DAILY_LIMIT ?? 50),
+  },
+  rateLimits: {
+    /** Requests per minute per IP, and sign-in attempts per minute per IP. */
+    perIp: Number(process.env.RATE_LIMIT_PER_IP ?? 300),
+    auth: Number(process.env.RATE_LIMIT_AUTH ?? 20),
+  },
+  /** SHA-256 fingerprints of the Android signing certs, for /.well-known/assetlinks.json. */
+  androidCertSha256: (process.env.ANDROID_CERT_SHA256 ?? '').split(',').map((s) => s.trim()).filter(Boolean),
   /** Unpaid requests stop being watched after this long. */
   paymentTtlMs: 30 * 60 * 1000,
   watchIntervalMs: 3000,

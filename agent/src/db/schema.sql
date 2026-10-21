@@ -86,3 +86,16 @@ alter table sweeps add constraint sweeps_status_check check (status in ('propose
 alter table sweeps add column if not exists signing_valid_until bigint;
 alter table sweeps drop constraint if exists sweeps_status_check;
 alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'signing', 'submitted', 'confirmed', 'cancelled', 'failed'));
+
+-- Agent usage per shop per day: enforces the daily cap and shows what Claude costs per shop.
+create table if not exists agent_usage (
+  merchant_id uuid not null references merchants(id),
+  day date not null,
+  requests integer not null default 0,
+  input_tokens bigint not null default 0,
+  output_tokens bigint not null default 0,
+  cache_read_tokens bigint not null default 0,
+  cache_write_tokens bigint not null default 0,
+  model text,
+  primary key (merchant_id, day)
+);
