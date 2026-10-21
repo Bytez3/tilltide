@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { fromBaseUnits } from '@tilltide/agent-pay-kit'
 import { verifySiwsMessage } from '../auth'
+import { alert } from '../alerts'
 import { config } from '../config'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type RefundRow } from '../db'
 import { PayPalError } from '../paypal'
@@ -146,6 +147,7 @@ export async function executeRefund(refund: RefundRow): Promise<RefundRow> {
     )
     if (result.status === 'COMPLETED') return finish({ status: 'completed', error: null, paypalRefundId: result.id })
     if (result.status === 'PENDING') return finish({ status: 'pending', error: null, paypalRefundId: result.id })
+    void alert(`refund-failed:${refund.id}`, `PayPal refused refund ${refund.id} (${result.status.toLowerCase()})`)
     return finish({ status: 'failed', error: `PayPal says ${result.status.toLowerCase()}`, paypalRefundId: result.id })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -155,6 +157,7 @@ export async function executeRefund(refund: RefundRow): Promise<RefundRow> {
     // Outage, auth problem, or a 4xx on a retry: it may or may not have gone through. Stay 'processing';
     // the next attempt reuses the same request id, so PayPal can't refund twice.
     const giveUp = leased.paypalAttempts >= MAX_ATTEMPTS
+    if (giveUp) void alert(`refund-stuck:${refund.id}`, `PayPal refund ${refund.id} is stuck after ${MAX_ATTEMPTS} attempts; check it in PayPal: ${message}`)
     return finish({ error: giveUp ? `Needs checking in PayPal (stopped after ${MAX_ATTEMPTS} attempts): ${message}` : message })
   }
 }

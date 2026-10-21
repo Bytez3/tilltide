@@ -1,5 +1,6 @@
 import { address } from '@solana/kit'
 import { findPayment } from '@tilltide/agent-pay-kit'
+import { alert } from '../alerts'
 import { config } from '../config'
 import { sql, type MerchantRow, type PaymentRow, type RefundRow } from '../db'
 import { rpc } from '../solana'
@@ -149,7 +150,7 @@ export function startWatcher() {
     try {
       await tick()
     } catch (err) {
-      console.error('Watcher tick failed', err)
+      void alert('watcher-failing', `The payment watcher is failing: ${err instanceof Error ? err.message : err}`)
     } finally {
       running = false
     }

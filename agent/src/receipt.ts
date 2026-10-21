@@ -106,7 +106,7 @@ export async function renderReceipt(paymentId: string) {
   </div>`
         : ''
   }
-  <p class="muted" style="text-align:center">Powered by Tilltide</p>
+  <p class="muted" style="text-align:center">Powered by Tilltide · <a href="/privacy">Privacy</a></p>
 </main></body></html>`
 }
 

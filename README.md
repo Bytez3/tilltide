@@ -107,6 +107,15 @@ docker build -f agent/Dockerfile -t tilltide-agent .
 
 API (devnet): https://api-production-83900.up.railway.app. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
 
+## Running it for real
+
+- **CI:** GitHub Actions runs typecheck, unit tests, lint and the full end-to-end suite (local Solana validator + Postgres) on every push.
+- **Alerts:** set `ALERT_WEBHOOK_URL` to a Discord or Slack incoming webhook. Tilltide posts there when a sweep or refund needs a human, the till has money Tilltide didn't take, or the payment watcher is failing.
+- **Monitoring:** `/health` is the quick liveness check for Railway. `/ready` checks that the database and Solana RPC answer, for an uptime monitor.
+- **Mainnet guard:** on `SOLANA_CLUSTER=mainnet` the API refuses to start with unsafe settings (public RPC, a domain you don't own, http `PUBLIC_URL`, PayPal sales to the platform account, fixed FX rates) and warns about missing ones.
+- **Legal:** `/privacy` and `/terms` are drafts awaiting a solicitor's review.
+- **Plan:** see [docs/LAUNCH-PLAN.md](docs/LAUNCH-PLAN.md).
+
 ## Rules
 
 - Devnet until M4.

@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { alert } from '../alerts'
 import { config } from '../config'
 import { sql, type MerchantRow } from '../db'
 import { getDailySummary, reconcileDay, todayIn } from './summary'
@@ -86,6 +87,10 @@ export async function writeDailyReport(merchant: MerchantRow, date: string): Pro
   const summary = await getDailySummary(merchant, date)
   const reconciliation = await reconcileDay(merchant, date).catch(() => null)
   const text = reportText(summary, reconciliation)
+  const unexplained = reconciliation?.onchainActivityNotInLedger.length ?? 0
+  if (unexplained > 0) {
+    void alert(`unexplained:${merchant.id}:${date}`, `${merchant.name}: ${unexplained} transfer(s) in the till on ${date} that Tilltide didn't take`)
+  }
   const narrative = await narrativeFor(merchant, text, summary)
   const stored = { summary, reconciliation }
   const json = JSON.stringify(stored, (_, v) => (typeof v === 'bigint' ? v.toString() : v))

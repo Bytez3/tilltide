@@ -1,6 +1,7 @@
 import { address, type Signature } from '@solana/kit'
 import { findAssociatedTokenPda } from '@solana-program/token'
 import { fromBaseUnits, sweepFee, sweepMemo, verifyPayment } from '@tilltide/agent-pay-kit'
+import { alert } from '../alerts'
 import { config } from '../config'
 import { sql, type MerchantRow, type SweepRow } from '../db'
 import { rpc } from '../solana'
@@ -192,7 +193,7 @@ async function markConfirmed(sweep: SweepRow, signature: Signature): Promise<Swe
 }
 
 async function markFailed(sweep: SweepRow, error: string): Promise<SweepRow> {
-  console.error(`Sweep ${sweep.id} needs attention: ${error}`)
+  void alert(`sweep-failed:${sweep.id}`, `Sweep ${sweep.id} needs attention: ${error}`)
   const [row] = await sql<SweepRow[]>`
     update sweeps set status = 'failed', error = ${error} where id = ${sweep.id} and status = 'submitted' returning *`
   return row ?? (await sql<SweepRow[]>`select * from sweeps where id = ${sweep.id}`)[0]!

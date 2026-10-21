@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy · Tilltide</title>
+<style>
+  :root { --bg:#F6F3EE; --ink:#14211F; --muted:#5E6B68; --line:#E2DDD4; --warn:#B4561C; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0F1716; --ink:#EEF2F1; --muted:#9BA8A5; --line:#25332F; --warn:#E39B66; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  main { max-width:680px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:26px; } h2 { font-size:18px; margin-top:28px; } .muted { color:var(--muted); font-size:14px; }
+  .draft { border:1px solid var(--warn); color:var(--warn); border-radius:10px; padding:10px 12px; font-size:14px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; } td, th { border-top:1px solid var(--line); padding:8px 6px; text-align:left; vertical-align:top; }
+</style>
+</head>
+<body><main>
+<p class="draft">Draft for review. This page has not yet been reviewed by a solicitor.</p>
+<h1>Privacy at Tilltide</h1>
+<p class="muted">Tilltide is run by Bytez3 (registered office: 128 City Road, London). Contact: info@bytez3.com. Last updated 21 October 2026.</p>
+
+<h2>Who this is for</h2>
+<p>Tilltide is a till and back-office app for independent shops. This page explains what Tilltide keeps about <strong>shop owners and staff</strong>, and about <strong>customers</strong> who pay a Tilltide shop.</p>
+<p>For a shop's own sales records, the shop decides what happens with them, and Tilltide processes them for the shop. For loyalty codes and receipts, Tilltide is responsible for that information itself.</p>
+
+<h2>What we keep, and why</h2>
+<table>
+  <tr><th>What</th><th>Why</th><th>How long</th></tr>
+  <tr><td>Shop details: name, till wallet address, owner wallet address, PayPal merchant id or email, settings</td><td>To run the till and pay the shop</td><td>While the shop uses Tilltide, then 6 years for accounting</td></tr>
+  <tr><td>Each sale: amount, time, how it was paid, the customer's wallet address or PayPal payer id, points earned and spent</td><td>To take payments, give loyalty points, produce reports and handle refunds</td><td>6 years (UK accounting records)</td></tr>
+  <tr><td>Loyalty codes for PayPal customers</td><td>So customers can spend their points</td><td>Until the customer or the shop asks us to delete it</td></tr>
+  <tr><td>Sign-in sessions and staff device names</td><td>Security</td><td>30 days, or until signed out</td></tr>
+  <tr><td>Questions asked to the AI assistant</td><td>To answer them</td><td>Not stored by Tilltide after the answer</td></tr>
+</table>
+<p>We don't collect customers' names, email addresses or card numbers. Card and PayPal details stay with PayPal.</p>
+
+<h2>Who else sees it</h2>
+<ul>
+  <li><strong>PayPal:</strong> processes PayPal and card payments and refunds.</li>
+  <li><strong>The Solana blockchain:</strong> wallet payments, loyalty points and transfers are recorded publicly onchain. Anyone can see a wallet address and its transactions; this can't be deleted.</li>
+  <li><strong>Anthropic (Claude):</strong> answers the shop owner's questions and writes end-of-day notes. It sees sales data, including wallet addresses and PayPal payer ids, for that purpose only.</li>
+  <li><strong>Our hosting providers:</strong> Railway (servers and database) and Cloudflare (network security).</li>
+</ul>
+<p>We don't sell data or use it for advertising.</p>
+
+<h2>Your rights</h2>
+<p>Under UK GDPR you can ask to see, correct or delete what we hold about you, or object to how we use it. Email info@bytez3.com.</p>
+<p>Information recorded on the blockchain can't be deleted by anyone. If you are a customer, the shop you paid may need to keep its sales records for accounting.</p>
+<p>You can complain to the Information Commissioner's Office (ico.org.uk).</p>
+
+<h2>Cookies</h2>
+<p>Receipts and these pages use no cookies or tracking. The app stores your sign-in on your device.</p>
+</main></body></html>

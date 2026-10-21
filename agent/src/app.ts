@@ -102,9 +102,24 @@ app.onError((err, c) => {
 
 app.get('/health', (c) => c.json({ ok: true, cluster: config.cluster }))
 
+/** Deeper check for uptime monitors: the database and the Solana RPC both answer. */
+app.get('/ready', async (c) => {
+  const timed = async <T>(p: Promise<T>) => Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))])
+  const [db, chain] = await Promise.allSettled([timed(sql`select 1`), timed(rpc.getSlot({ commitment: 'confirmed' }).send())])
+  const ok = db.status === 'fulfilled' && chain.status === 'fulfilled'
+  return c.json(
+    { ok, database: db.status === 'fulfilled' ? 'ok' : 'down', solana: chain.status === 'fulfilled' ? 'ok' : 'down', cluster: config.cluster },
+    ok ? 200 : 503,
+  )
+})
+
 // The app's MWA identity points at this server: wallets load the icon from here and can check
 // the Android app against Digital Asset Links.
 const favicon = readFileSync(new URL('../public/favicon.png', import.meta.url))
+const privacyPage = readFileSync(new URL('../public/privacy.html', import.meta.url), 'utf8')
+const termsPage = readFileSync(new URL('../public/terms.html', import.meta.url), 'utf8')
+app.get('/privacy', (c) => c.html(privacyPage))
+app.get('/terms', (c) => c.html(termsPage))
 app.get('/favicon.png', (c) => c.body(favicon, 200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }))
 app.get('/.well-known/assetlinks.json', (c) =>
   c.json(

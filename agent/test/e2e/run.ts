@@ -1011,6 +1011,9 @@ async function main() {
       const huge = await api('POST', '/shop/payments', { amount: '1', label: 'x'.repeat(100_000) }, tillToken)
       assert.equal(huge.status, 413)
       assert.equal((await fetch(`${API}/favicon.png`)).headers.get('content-type'), 'image/png')
+      assert.deepEqual(await (await fetch(`${API}/ready`)).json(), { ok: true, database: 'ok', solana: 'ok', cluster: 'devnet' })
+      assert.match(await (await fetch(`${API}/privacy`)).text(), /Privacy at Tilltide/)
+      assert.match(await (await fetch(`${API}/terms`)).text(), /Tilltide never holds your money/)
       assert.deepEqual(await (await fetch(`${API}/.well-known/assetlinks.json`)).json(), [])
       const headers = (await fetch(`${API}/health`)).headers
       assert.equal(headers.get('x-content-type-options'), 'nosniff')
