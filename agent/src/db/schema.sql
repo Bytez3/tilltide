@@ -79,3 +79,7 @@ alter table sweeps add column if not exists submitted_at timestamptz;
 alter table sweeps add column if not exists error text;
 alter table sweeps drop constraint if exists sweeps_status_check;
 alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'submitted', 'confirmed', 'cancelled'));
+
+-- 'failed': the sweep's transaction landed but didn't add up. Never re-signable; needs a human.
+alter table sweeps drop constraint if exists sweeps_status_check;
+alter table sweeps add constraint sweeps_status_check check (status in ('proposed', 'submitted', 'confirmed', 'cancelled', 'failed'));

@@ -8,7 +8,7 @@ import { address, getPublicKeyFromAddress, isAddress, verifySignature, type Sign
 import { config } from './config'
 import { sql } from './db'
 
-const NONCE_TTL_MS = 10 * 60 * 1000
+const NONCE_TTL_MS = 10 * 60 * 1000 // how long a nonce can wait to be signed
 const SESSION_TTL_DAYS = 30
 
 export const SIGN_IN_STATEMENT = 'Sign in to Tilltide to run your shop.'
@@ -43,10 +43,19 @@ export async function verifySignIn(input: { address: string; signedMessage: Uint
   const header = `${config.authDomain} wants you to sign in with your Solana account:\n${wallet}`
   if (!message.startsWith(header)) throw new AuthError('Sign-in message is for a different site or wallet')
 
-  const issuedAt = field(message, 'Issued At')
-  if (issuedAt && Math.abs(Date.now() - Date.parse(issuedAt)) > NONCE_TTL_MS) throw new AuthError('Sign-in message is too old')
-  const expiresAt = field(message, 'Expiration Time')
-  if (expiresAt && Date.parse(expiresAt) < Date.now()) throw new AuthError('Sign-in message has expired')
+  // Freshness comes from the single-use nonce, not timestamps: shop phones often have the wrong clock.
+  const uri = field(message, 'URI')
+  if (uri) {
+    let host: string | null = null
+    try {
+      host = new URL(uri).host
+    } catch {}
+    if (host !== config.authDomain) throw new AuthError('Sign-in message is for a different site')
+  }
+  const chainId = field(message, 'Chain ID')
+  if (chainId && chainId.replace(/^solana:/, '') !== config.cluster) {
+    throw new AuthError(`Sign-in message is for ${chainId}, not ${config.cluster}`)
+  }
 
   const nonce = field(message, 'Nonce')
   if (!nonce) throw new AuthError('Sign-in message has no nonce')

@@ -16,6 +16,9 @@ importers:
       '@hono/node-server':
         specifier: ^2.1.5
         version: 2.1.5(hono@4.13.13)
+      '@solana-program/memo':
+        specifier: ^0.16.0
+        version: 0.16.0(@solana/kit@8.5.0(typescript@5.9.3))
       '@solana-program/system':
         specifier: ^0.16.0
         version: 0.16.0(@solana/kit@8.5.0(typescript@5.9.3))
@@ -195,6 +198,9 @@ importers:
 
   packages/agent-pay-kit:
     devDependencies:
+      '@solana-program/memo':
+        specifier: ^0.16.0
+        version: 0.16.0(@solana/kit@8.5.0(typescript@5.9.3))
       '@solana-program/token':
         specifier: ^0.18.0
         version: 0.18.0(@solana/kit@8.5.0(typescript@5.9.3))

@@ -1,6 +1,6 @@
 import { address, type Signature } from '@solana/kit'
 import { findAssociatedTokenPda } from '@solana-program/token'
-import { fromBaseUnits, verifyPayment } from '@tilltide/agent-pay-kit'
+import { fromBaseUnits, sweepMemo, verifyPayment } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
 import { sql, type MerchantRow, type SweepRow } from '../db'
 import { rpc } from '../solana'
@@ -51,31 +51,42 @@ export async function getSweep(merchant: MerchantRow, id: string): Promise<Sweep
   return row ?? null
 }
 
-/** Checks a transaction is exactly this sweep: from the till, to the owner, at least the amount, after the proposal. */
-async function verifySweepTransaction(merchant: MerchantRow, sweep: SweepRow, signature: Signature): Promise<string | null> {
+type SweepCheck =
+  | { kind: 'ok' }
+  /** RPC hasn't caught up; ask again later. Never treat this as "didn't happen". */
+  | { kind: 'retry' }
+  /** A real transaction, but not this sweep (no matching memo). Nothing moved for this sweep. */
+  | { kind: 'not-this-sweep'; reason: string }
+  /** Carries this sweep's memo but doesn't add up. Money may have moved: stop and let a human look. */
+  | { kind: 'bad'; reason: string }
+
+/** Identifies the sweep by its onchain memo, then checks it went from the till to the owner in full. */
+async function checkSweepTransaction(merchant: MerchantRow, sweep: SweepRow, signature: Signature): Promise<SweepCheck> {
   const result = await verifyPayment(rpc, signature, {
     recipient: address(sweep.toWallet),
     token: config.tokens[sweep.tokenSymbol],
     amount: sweep.amount,
   })
-  if (!result.ok) return result.reason
-  if (result.payer !== merchant.wallet) return 'That transaction was not sent from the till wallet'
-  if (result.blockTime !== null && Number(result.blockTime) * 1000 < sweep.createdAt.getTime() - 60_000) {
-    return 'That transaction is older than this sweep proposal'
+  if (!result.ok && result.retryable) return { kind: 'retry' }
+  if (!result.memos?.includes(sweepMemo(sweep.id))) {
+    return { kind: 'not-this-sweep', reason: "That transaction isn't this sweep; nothing moved for it" }
   }
-  return null
+  if (!result.ok) return { kind: 'bad', reason: `The sweep transaction landed but doesn't add up: ${result.reason}` }
+  if (result.payer !== merchant.wallet) return { kind: 'bad', reason: 'The sweep transaction was not sent from the till wallet' }
+  return { kind: 'ok' }
 }
 
 /**
  * The app reports the signature straight after the wallet signs and sends. From here the sweep is
  * 'submitted' and can't be signed again until the chain shows this transaction can't land.
+ * A cancelled sweep is accepted too: the owner may have signed it just as a new proposal replaced it.
  */
 export async function submitSweep(merchant: MerchantRow, id: string, signature: Signature): Promise<SweepRow> {
   const [usedElsewhere] = await sql`select 1 from sweeps where signature = ${signature} and id <> ${id}`
   if (usedElsewhere) throw new SweepError('That transaction already belongs to another sweep')
   const [row] = await sql<SweepRow[]>`
-    update sweeps set status = 'submitted', signature = ${signature}, submitted_at = now()
-    where id = ${id} and merchant_id = ${merchant.id} and status = 'proposed' returning *`
+    update sweeps set status = 'submitted', signature = ${signature}, submitted_at = now(), error = null
+    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled') returning *`
   if (!row) {
     const existing = await getSweep(merchant, id)
     if (!existing) throw new SweepError('Sweep not found')
@@ -87,35 +98,40 @@ export async function submitSweep(merchant: MerchantRow, id: string, signature: 
 
 /**
  * Brings a sweep up to date with the chain:
- * - submitted → confirmed when its transaction verifies, or back to proposed if it failed or expired.
- * - proposed → confirmed if the till already sent a matching transfer (e.g. the app lost the signature).
+ * - submitted → confirmed when its transaction verifies; back to proposed only if the chain shows it
+ *   failed, never landed, or isn't this sweep; 'failed' (not signable) if it landed but doesn't add up.
+ * - proposed/cancelled → confirmed if the till already sent this sweep (its memo is onchain), e.g. the
+ *   wallet sent it but the app lost the signature.
  */
 export async function settleSweep(merchant: MerchantRow, sweep: SweepRow): Promise<SweepRow> {
   if (sweep.status === 'submitted' && sweep.signature) {
     const signature = sweep.signature as Signature
     const { value } = await rpc.getSignatureStatuses([signature], { searchTransactionHistory: true }).send()
     const status = value[0]
-    const landed = status && !status.err && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')
-    if (landed) {
-      const problem = await verifySweepTransaction(merchant, sweep, signature)
-      if (!problem) return markConfirmed(sweep, signature)
-      return revertToProposed(sweep, problem)
-    }
     if (status?.err) return revertToProposed(sweep, 'The sweep transaction failed onchain; nothing moved')
+    const landed = status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')
+    if (landed) {
+      const check = await checkSweepTransaction(merchant, sweep, signature)
+      if (check.kind === 'ok') return markConfirmed(sweep, signature)
+      if (check.kind === 'retry') return sweep
+      if (check.kind === 'not-this-sweep') return revertToProposed(sweep, check.reason)
+      return markFailed(sweep, check.reason)
+    }
     const age = Date.now() - (sweep.submittedAt?.getTime() ?? 0)
     if (!status && age > SUBMIT_EXPIRY_MS) return revertToProposed(sweep, 'The sweep never reached the chain; nothing moved')
     return sweep
   }
 
-  if (sweep.status === 'proposed') {
+  if (sweep.status === 'proposed' || sweep.status === 'cancelled') {
     const token = config.tokens[sweep.tokenSymbol]
     const [till] = await findAssociatedTokenPda({ owner: address(merchant.wallet), mint: token.mint, tokenProgram: token.tokenProgram })
     const since = BigInt(Math.floor(sweep.createdAt.getTime() / 1000) - 60)
-    const recent = await rpc.getSignaturesForAddress(till, { limit: 50, commitment: 'confirmed' }).send()
-    const used = new Set((await sql<{ signature: string }[]>`select signature from sweeps where signature is not null`).map((r) => r.signature))
+    const recent = await rpc.getSignaturesForAddress(till, { limit: 100, commitment: 'confirmed' }).send()
     for (const s of recent) {
-      if (s.err || s.blockTime === null || s.blockTime < since || used.has(s.signature)) continue
-      if (!(await verifySweepTransaction(merchant, sweep, s.signature))) return markConfirmed(sweep, s.signature)
+      if (s.err || s.blockTime === null || s.blockTime < since) continue
+      // Only a transaction carrying this sweep's memo counts, never a look-alike transfer.
+      if (!s.memo?.includes(sweepMemo(sweep.id))) continue
+      if ((await checkSweepTransaction(merchant, sweep, s.signature)).kind === 'ok') return markConfirmed(sweep, s.signature)
     }
   }
   return sweep
@@ -124,7 +140,14 @@ export async function settleSweep(merchant: MerchantRow, sweep: SweepRow): Promi
 async function markConfirmed(sweep: SweepRow, signature: Signature): Promise<SweepRow> {
   const [row] = await sql<SweepRow[]>`
     update sweeps set status = 'confirmed', signature = ${signature}, error = null
-    where id = ${sweep.id} and status in ('proposed', 'submitted') returning *`
+    where id = ${sweep.id} and status in ('proposed', 'submitted', 'cancelled') returning *`
+  return row ?? (await sql<SweepRow[]>`select * from sweeps where id = ${sweep.id}`)[0]!
+}
+
+async function markFailed(sweep: SweepRow, error: string): Promise<SweepRow> {
+  console.error(`Sweep ${sweep.id} needs attention: ${error}`)
+  const [row] = await sql<SweepRow[]>`
+    update sweeps set status = 'failed', error = ${error} where id = ${sweep.id} and status = 'submitted' returning *`
   return row ?? (await sql<SweepRow[]>`select * from sweeps where id = ${sweep.id}`)[0]!
 }
 

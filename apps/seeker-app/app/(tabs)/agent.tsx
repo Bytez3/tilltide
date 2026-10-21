@@ -8,6 +8,16 @@ import { useSignSweep } from '@/features/sweep/use-sweep'
 import { api, ChatTurn, Sweep } from '@/lib/api'
 import { shortAddress } from '@/lib/format'
 
+/** The API takes up to 40 turns of 4000 characters; keep the most recent and cut long ones. */
+const MAX_TURNS = 20
+const MAX_CHARS = 4000
+function forApi(turns: ChatTurn[]): ChatTurn[] {
+  const recent = turns.slice(-MAX_TURNS)
+  // The history must start with the user.
+  while (recent.length > 1 && recent[0]!.role !== 'user') recent.shift()
+  return recent.map((t) => ({ role: t.role, content: t.content.slice(0, MAX_CHARS) }))
+}
+
 const SUGGESTIONS = ['What did I take today?', 'Who are my top customers?', 'Reconcile today and suggest a sweep']
 
 export default function AgentScreen() {
@@ -30,14 +40,14 @@ export default function AgentScreen() {
   }
 
   async function send(text: string) {
-    if (!merchant || !text.trim()) return
+    if (!merchant || !text.trim() || thinking || signing) return
     const next: ChatTurn[] = [...turns, { role: 'user', content: text.trim() }]
     setTurns(next)
     setDraft('')
     setThinking(true)
     setError(null)
     try {
-      const { reply, sweeps } = await api.chat(next)
+      const { reply, sweeps } = await api.chat(forApi(next))
       setTurns([...next, { role: 'assistant', content: reply }])
       if (sweeps.length) setSweep(sweeps.at(-1)!)
     } catch (e) {
@@ -56,9 +66,16 @@ export default function AgentScreen() {
       setSweep(await signSweep(sweep))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      // Show the server's view (it may have been submitted before the error).
+      setSweep(await api.checkSweep(sweep.id).catch(() => sweep))
     } finally {
       setSigning(false)
     }
+  }
+
+  async function checkAgain() {
+    if (!sweep) return
+    setSweep(await api.checkSweep(sweep.id).catch((e) => (setError(e instanceof Error ? e.message : String(e)), sweep)))
   }
 
   async function cancelSweep() {
@@ -115,10 +132,15 @@ export default function AgentScreen() {
             {sweep.reason && <Text style={ui.muted}>{sweep.reason}</Text>}
             {sweep.error && <Text style={[ui.muted, { color: colors.warn }]}>{sweep.error}</Text>}
             {sweep.status === 'submitted' ? (
-              <View style={ui.row}>
-                <ActivityIndicator color={colors.sea} />
-                <Text style={ui.muted}>Confirming on the chain…</Text>
+              <View style={{ gap: 8 }}>
+                <View style={ui.row}>
+                  {signing && <ActivityIndicator color={colors.sea} />}
+                  <Text style={ui.muted}>Sent. Confirming on the chain…</Text>
+                </View>
+                {!signing && <Button title="Check again" variant="secondary" onPress={checkAgain} />}
               </View>
+            ) : sweep.status === 'failed' ? (
+              <Text style={{ color: colors.danger, fontWeight: '600' }}>Needs checking. Do not sign again; contact support.</Text>
             ) : sweep.status === 'proposed' ? (
               <View style={ui.row}>
                 <Button title="Cancel" variant="secondary" onPress={cancelSweep} style={{ flex: 1 }} />
@@ -142,7 +164,7 @@ export default function AgentScreen() {
           onSubmitEditing={() => send(draft)}
           returnKeyType="send"
         />
-        <Button title="Send" onPress={() => send(draft)} disabled={!draft.trim() || thinking} style={{ paddingHorizontal: 18 }} />
+        <Button title="Send" onPress={() => send(draft)} disabled={!draft.trim() || thinking || signing} style={{ paddingHorizontal: 18 }} />
       </View>
     </KeyboardAvoidingView>
   )

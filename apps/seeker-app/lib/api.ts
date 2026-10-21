@@ -42,7 +42,7 @@ export interface Sweep {
   token: 'USDC' | 'PYUSD'
   toWallet: string
   reason: string | null
-  status: 'proposed' | 'submitted' | 'confirmed' | 'cancelled'
+  status: 'proposed' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
   signature: string | null
   error: string | null
 }

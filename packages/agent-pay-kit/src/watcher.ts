@@ -1,4 +1,5 @@
 import type { Address, Rpc, Signature, SolanaRpcApi } from '@solana/kit'
+import { SUPPORTED_MEMO_PROGRAM_ADDRESSES } from '@solana-program/memo'
 import type { PaymentToken } from './tokens'
 
 export type SolanaRpc = Rpc<SolanaRpcApi>
@@ -25,9 +26,18 @@ export interface ExpectedPayment {
 }
 
 export type VerifiedPayment =
-  | { ok: true; signature: Signature; payer: Address | null; received: bigint; slot: bigint; blockTime: bigint | null }
+  | {
+      ok: true
+      signature: Signature
+      payer: Address | null
+      received: bigint
+      slot: bigint
+      blockTime: bigint | null
+      /** Text of any memo instructions in the transaction. */
+      memos: string[]
+    }
   /** `retryable`: the RPC hasn't caught up yet; check again rather than treating it as a bad payment. */
-  | { ok: false; signature: Signature; reason: string; retryable?: boolean }
+  | { ok: false; signature: Signature; reason: string; retryable?: boolean; memos?: string[] }
 
 interface TokenBalance {
   mint: string
@@ -52,14 +62,18 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
     .send()
   if (!tx) return { ok: false, signature, reason: 'Transaction not found', retryable: true }
   if (!tx.meta) return { ok: false, signature, reason: 'Transaction has no metadata', retryable: true }
-  if (tx.meta.err) return { ok: false, signature, reason: 'Transaction failed onchain' }
+  const memoPrograms = new Set<string>(SUPPORTED_MEMO_PROGRAM_ADDRESSES)
+  const memos = (tx.transaction.message.instructions as readonly { programId?: string; parsed?: unknown }[])
+    .filter((ix) => ix.programId && memoPrograms.has(ix.programId) && typeof ix.parsed === 'string')
+    .map((ix) => ix.parsed as string)
+  if (tx.meta.err) return { ok: false, signature, reason: 'Transaction failed onchain', memos }
 
   const pre = tx.meta.preTokenBalances as readonly TokenBalance[] | undefined
   const post = tx.meta.postTokenBalances as readonly TokenBalance[] | undefined
   const mint = expected.token.mint
   const received = balanceOf(post, expected.recipient, mint) - balanceOf(pre, expected.recipient, mint)
   if (received < expected.amount) {
-    return { ok: false, signature, reason: `Recipient received ${received}, expected ${expected.amount}` }
+    return { ok: false, signature, reason: `Recipient received ${received}, expected ${expected.amount}`, memos }
   }
 
   // The payer is whichever owner's balance of this mint went down the most.
@@ -74,7 +88,7 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
     }
   }
 
-  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime }
+  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime, memos }
 }
 
 export type PaymentSearch =
@@ -87,12 +101,26 @@ export type PaymentSearch =
  * Looks at every transaction carrying `reference` and accepts the first valid payment.
  * Anyone can see the reference in the QR, so one bad or dust transaction must not block the real one.
  */
-export async function findPayment(rpc: SolanaRpc, reference: Address, expected: ExpectedPayment): Promise<PaymentSearch> {
+export async function findPayment(
+  rpc: SolanaRpc,
+  reference: Address,
+  expected: ExpectedPayment,
+  /**
+   * Signatures already known not to be a valid payment. Pass the same set on every poll: each
+   * transaction is then fetched once, so a flood of dust can't slow the watcher down.
+   */
+  rejected: Set<string> = new Set(),
+): Promise<PaymentSearch> {
   let mismatch: string | null = null
-  for (const signature of await findSignaturesByReference(rpc, reference)) {
-    const result = await verifyPayment(rpc, signature, expected)
-    if (result.ok) return { status: 'paid', payment: result }
-    if (!result.retryable) mismatch = result.reason
+  const fresh = (await findSignaturesByReference(rpc, reference)).filter((s) => !rejected.has(s))
+  for (let i = 0; i < fresh.length; i += 10) {
+    const results = await Promise.all(fresh.slice(i, i + 10).map((signature) => verifyPayment(rpc, signature, expected)))
+    for (const result of results) {
+      if (result.ok) return { status: 'paid', payment: result }
+      if (result.retryable) continue
+      rejected.add(result.signature)
+      mismatch = result.reason
+    }
   }
   return mismatch ? { status: 'mismatch', reason: mismatch } : { status: 'none' }
 }

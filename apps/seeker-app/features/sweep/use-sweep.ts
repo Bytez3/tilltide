@@ -29,7 +29,7 @@ export function useSignSweep(merchant: Merchant | null) {
       if (account.address !== merchant.wallet) throw new Error('Connected wallet is not this shop’s till wallet')
 
       const latest = await api.checkSweep(sweep.id)
-      if (latest.status !== 'proposed') return latest
+      if (latest.status !== 'proposed' && latest.status !== 'cancelled') return latest
 
       const {
         context: { slot },
@@ -42,6 +42,7 @@ export function useSignSweep(merchant: Merchant | null) {
         to: address(latest.toWallet),
         token: TOKENS[merchant.cluster][latest.token],
         amount: BigInt(latest.amount),
+        sweepId: latest.id,
       })
       const message = pipe(
         createTransactionMessage({ version: 0 }),

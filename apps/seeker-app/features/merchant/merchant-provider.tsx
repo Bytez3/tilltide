@@ -67,7 +67,9 @@ export function MerchantProvider({ children }: PropsWithChildren) {
         nonce,
         issuedAt: new Date().toISOString(),
       })
-      const wallet = result.account.address
+      // The signing account is in the SIWS message itself (line 2). The hook's `account` can still point at
+      // a previously selected account on wallets with several.
+      const wallet = new TextDecoder().decode(result.signedMessage).split('\n')[1]?.trim() ?? result.account.address
       const { token } = await api.verifySignIn(wallet, fromUint8Array(result.signedMessage), fromUint8Array(result.signature))
       await AsyncStorage.setItem(sessionKey(wallet), token)
       setSession(token, () => clearSession(wallet))

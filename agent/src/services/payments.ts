@@ -72,9 +72,11 @@ export async function createPayPalPayment(merchant: MerchantRow, amount: bigint,
 /** Captures an approved PayPal order and marks the payment paid. Returns true if the status changed. */
 export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> {
   const paypal = getPayPal()
-  if (!paypal || payment.status !== 'pending' || !payment.paypalOrderId) return false
+  if (!paypal || !payment.paypalOrderId) return false
+  if (payment.status !== 'pending' && payment.status !== 'expired') return false
   let order = await paypal.getOrder(payment.paypalOrderId)
-  if (order.status === 'APPROVED') {
+  // An expired request is never captured; but a capture that completed just before expiry still counts.
+  if (order.status === 'APPROVED' && payment.status === 'pending') {
     try {
       order = await paypal.captureOrder(order.id)
     } catch (err) {
@@ -87,8 +89,8 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
   if (order.status === 'COMPLETED' && pendingCapture && pendingCapture.status === 'PENDING') {
     // Captured but PayPal is still reviewing it. Keep watching; don't let it expire.
     await sql`
-      update payments set paypal_capture_id = ${pendingCapture.id}, failure_reason = 'PayPal is reviewing this payment'
-      where id = ${payment.id} and status = 'pending'`
+      update payments set status = 'pending', paypal_capture_id = ${pendingCapture.id}, failure_reason = 'PayPal is reviewing this payment'
+      where id = ${payment.id} and status in ('pending', 'expired')`
     return false
   }
   if (order.status === 'COMPLETED' && pendingCapture && pendingCapture.status !== 'COMPLETED') {
@@ -103,7 +105,7 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
     await sql`
       update payments set status = 'paid', paypal_capture_id = ${capture.id}, paid_at = now(), failure_reason = null,
         payer = ${order.payer?.payer_id ? `paypal:${order.payer.payer_id}` : null}
-      where id = ${payment.id} and status = 'pending'`
+      where id = ${payment.id} and status in ('pending', 'expired')`
     return true
   }
   if (order.status === 'VOIDED') {

@@ -10,7 +10,7 @@ export const sql = postgres(config.databaseUrl, {
 })
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'expired'
-export type SweepStatus = 'proposed' | 'submitted' | 'confirmed' | 'cancelled'
+export type SweepStatus = 'proposed' | 'submitted' | 'confirmed' | 'cancelled' | 'failed'
 
 export interface MerchantRow {
   id: string

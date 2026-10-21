@@ -31,23 +31,23 @@ export interface ChatTurn {
   content: string
 }
 
-export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
+/** The agent's tools, bound to one shop. Sweeps the agent proposes are pushed onto `proposed`. */
+export function buildTools(merchant: MerchantRow, proposed: SweepRow[]) {
   const token = merchantToken(merchant)
-  const proposed: SweepRow[] = []
   const dateSchema = z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional()
     .describe("Calendar date YYYY-MM-DD in the shop's timezone. Defaults to today.")
 
-  const tools = [
+  return [
     betaZodTool({
       name: 'get_payments',
       description: 'List recent payment requests (paid, pending, failed, expired), newest first.',
       inputSchema: z.object({
         status: z.enum(['paid', 'pending', 'failed', 'expired']).optional(),
         rail: z.enum(['solana', 'paypal']).optional(),
-        since: z.string().optional().describe('ISO timestamp; only payments created after this'),
+        since: z.iso.datetime({ offset: true }).optional().describe('ISO 8601 timestamp; only payments created after this'),
         limit: z.number().int().min(1).max(100).optional(),
       }),
       run: async ({ status, rail, since, limit }) => {
@@ -104,6 +104,12 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
       },
     }),
   ]
+}
+
+export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
+  const token = merchantToken(merchant)
+  const proposed: SweepRow[] = []
+  const tools = buildTools(merchant, proposed)
 
   const context = `Shop: ${merchant.name}. Timezone ${merchant.timezone}; today is ${todayIn(merchant.timezone)}. Payment token ${token.symbol}. Points rate ${merchant.pointsPerUnit} per 1 ${token.symbol}. Owner wallet ${merchant.ownerWallet ? 'is set' : 'is NOT set'}.`
 

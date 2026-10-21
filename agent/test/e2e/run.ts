@@ -192,6 +192,7 @@ async function main() {
       SOLANA_RPC_URL: RPC_URL,
       PORT: String(API_PORT),
       POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
+      AUTH_DOMAIN: 'tilltide.test',
       PAYPAL_CLIENT_ID: 'mock',
       PAYPAL_CLIENT_SECRET: 'mock',
       PAYPAL_API_BASE: `http://127.0.0.1:${API_PORT + 12}`,
@@ -267,7 +268,9 @@ async function main() {
     async function siwsMessage(signer: KeyPairSigner, nonce: string, domain: string, statement: string) {
       return new TextEncoder().encode(
         `${domain} wants you to sign in with your Solana account:\n${signer.address}\n\n${statement}\n\n` +
-          `URI: https://${domain}\nVersion: 1\nChain ID: devnet\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`,
+          `URI: https://${domain}\nVersion: 1\nChain ID: solana:devnet\nNonce: ${nonce}\n` +
+          // A phone with a badly wrong clock must still be able to sign in.
+          `Issued At: ${new Date(Date.now() - 3 * 86_400_000).toISOString()}`,
       )
     }
     async function signIn(signer: KeyPairSigner): Promise<string> {
@@ -345,6 +348,16 @@ async function main() {
         signature: Buffer.from(await signBytes(till.keyPair.privateKey, wrongDomain)).toString('base64'),
       })
       assert.equal(r.status, 401)
+
+      const mainnetMsg = new TextEncoder().encode(
+        new TextDecoder().decode(await siwsMessage(till, (await api('POST', '/auth/nonce')).body.nonce, n.domain, n.statement)).replace('solana:devnet', 'solana:mainnet'),
+      )
+      const mainnet = await api('POST', '/auth/verify', {
+        address: till.address,
+        signedMessage: Buffer.from(mainnetMsg).toString('base64'),
+        signature: Buffer.from(await signBytes(till.keyPair.privateKey, mainnetMsg)).toString('base64'),
+      })
+      assert.equal(mainnet.status, 401, 'wrong chain rejected')
 
       tillToken = await signIn(till)
     })
@@ -481,7 +494,7 @@ async function main() {
 
       const signature = await send(
         till,
-        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: BigInt(sweep.amount) }),
+        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: BigInt(sweep.amount), sweepId: sweep.id }),
       )
       const submitted = await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature }, tillToken)
       assert.equal(submitted.status, 200, JSON.stringify(submitted.body))
@@ -508,7 +521,7 @@ async function main() {
       ])
       const wrongSource = await api('POST', `/shop/sweeps/${second.id}/submit`, { signature: notFromTill }, tillToken)
       assert.equal(wrongSource.body.status, 'proposed')
-      assert.match(wrongSource.body.error, /not sent from the till/)
+      assert.match(wrongSource.body.error, /isn't this sweep/)
       assert.equal((await api('POST', `/shop/sweeps/${second.id}/cancel`, undefined, tillToken)).body.status, 'cancelled')
 
       const recon = await api('GET', '/shop/summary?reconcile=true', undefined, tillToken)
@@ -524,7 +537,7 @@ async function main() {
       const sweep = serializeSweep(await proposeSweep(merchant, 500_000n, null))
 
       // Signed but never broadcast: what a dropped transaction looks like.
-      const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 500_000n })
+      const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 500_000n, sweepId: sweep.id })
       const { signature: dropped } = await signTransaction(till, instructions)
       const submitted = await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature: dropped }, tillToken)
       assert.equal(submitted.body.status, 'submitted')
@@ -543,6 +556,35 @@ async function main() {
       assert.equal(found.body.status, 'confirmed')
     })
 
+    await step('a look-alike manual transfer never confirms a sweep; a cancelled sweep that was signed still does', async () => {
+      const { proposeSweep, serializeSweep } = await import('../../src/services/sweeps')
+      const { getSweepInstructions, TOKENS } = await import('@tilltide/agent-pay-kit')
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+
+      const a = serializeSweep(await proposeSweep(merchant, 250_000n, null))
+      // The owner moves the same amount by hand, no memo: that is not the sweep.
+      await send(till, [
+        getTransferCheckedInstruction({
+          source: await ata(till.address, USDC, TOKEN),
+          mint: USDC,
+          destination: await ata(owner.address, USDC, TOKEN),
+          authority: till,
+          amount: 250_000n,
+          decimals: 6,
+        }),
+      ])
+      assert.equal((await api('POST', `/shop/sweeps/${a.id}/check`, undefined, tillToken)).body.status, 'proposed')
+
+      // The owner signs A just as the agent proposes B (which cancels A). A's transfer still counts.
+      const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 250_000n, sweepId: a.id })
+      const b = serializeSweep(await proposeSweep(merchant, 100_000n, null))
+      assert.equal((await sql`select status from sweeps where id = ${a.id}`)[0]!.status, 'cancelled')
+      const signature = await send(till, instructions)
+      const submitted = await api('POST', `/shop/sweeps/${a.id}/submit`, { signature }, tillToken)
+      assert.equal(submitted.body.status, 'confirmed', JSON.stringify(submitted.body))
+      await api('POST', `/shop/sweeps/${b.id}/cancel`, undefined, tillToken)
+    })
+
     await step('PYUSD (Token-2022): pay, verify, points, sweep', async () => {
       await api('PATCH', '/shop', { token: 'PYUSD' }, tillToken)
       const created = await api('POST', '/shop/payments', { amount: '3.25' }, tillToken)
@@ -559,7 +601,7 @@ async function main() {
       const sweep = serializeSweep(await proposeSweep(merchant, 3_250_000n, null))
       const signature = await send(
         till,
-        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.PYUSD, amount: 3_250_000n }),
+        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.PYUSD, amount: 3_250_000n, sweepId: sweep.id }),
       )
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature }, tillToken)).body.status, 'confirmed')
       assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_250_000n)
@@ -626,6 +668,41 @@ async function main() {
     await step('summary splits takings by rail', async () => {
       const { body } = await api('GET', '/shop/summary', undefined, tillToken)
       assert.deepEqual(body.summary.byRail, { solana: '9.75', paypal: '30.25' })
+    })
+
+    await step("agent tools return real data and can't move money", async () => {
+      const { buildTools } = await import('../../src/agent')
+      // The PYUSD till was swept empty above; switch back to USDC, which still holds a balance.
+      await api('PATCH', '/shop', { token: 'USDC' }, tillToken)
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      const proposed: any[] = []
+      const tools = Object.fromEntries(buildTools(merchant, proposed).map((t) => [t.name, t]))
+      assert.deepEqual(Object.keys(tools).sort(), ['get_daily_summary', 'get_payments', 'issue_points', 'sweep_to_owner'])
+      const run = (name: string, input: unknown) => (tools[name] as any).run(tools[name]!.parse(input))
+
+      const payments = JSON.parse(await run('get_payments', { status: 'paid', rail: 'paypal' }))
+      assert.equal(payments.length, 3)
+      assert.ok(payments.every((p: any) => p.rail === 'paypal' && p.status === 'paid'))
+      assert.equal(payments.find((p: any) => p.label === 'Cream tea').amount, '7.25')
+      assert.equal(JSON.parse(await run('get_payments', { since: new Date(Date.now() + 60_000).toISOString() })).length, 0)
+      assert.throws(() => tools.get_payments!.parse({ since: 'last tuesday' }))
+
+      const { summary, reconciliation } = JSON.parse(await run('get_daily_summary', { reconcile: true }))
+      assert.equal(summary.takings, '40')
+      assert.ok(reconciliation.tillBalance)
+
+      assert.match(await run('issue_points', { payment_id: firstPaymentId }), /already issued/)
+      assert.equal(await run('issue_points', { payment_id: '00000000-0000-4000-8000-000000000000' }), 'Payment not found for this shop')
+
+      const before = await import('../../src/services/sweeps').then((m) => m.tillBalance(merchant))
+      const tooMuch = JSON.parse(await run('sweep_to_owner', { amount: '100000', reason: 'test' }))
+      assert.equal(tooMuch.proposed, false)
+      assert.match(tooMuch.error, /only holds/)
+      const ok = JSON.parse(await run('sweep_to_owner', { amount: '1', reason: 'End of day' }))
+      assert.equal(ok.proposed, true, JSON.stringify(ok))
+      assert.equal(ok.sweep.status, 'proposed', 'a proposal only; nothing moved')
+      assert.equal(proposed.length, 1)
+      assert.equal(await import('../../src/services/sweeps').then((m) => m.tillBalance(merchant)), before)
     })
 
     await step('watcher expires abandoned requests', async () => {

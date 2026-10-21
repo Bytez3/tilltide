@@ -15,12 +15,14 @@
   },
   "peerDependencies": {
     "@solana-program/token": "^0.18.0",
-    "@solana/kit": "^8.5.0"
+    "@solana/kit": "^8.5.0",
+    "@solana-program/memo": "^0.16.0"
   },
   "devDependencies": {
     "@solana-program/token": "^0.18.0",
     "@solana/kit": "^8.5.0",
     "typescript": "~5.9.3",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "@solana-program/memo": "^0.16.0"
   }
 }

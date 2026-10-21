@@ -47,6 +47,7 @@ export default function ChargeScreen() {
 
   /** Polls one sale until it settles. Waits for each response before asking again, so requests never pile up. */
   async function watch(created: Payment & { url: string }) {
+    let paidAt: number | null = null
     while (current.current === created.id) {
       await new Promise((r) => setTimeout(r, 2000))
       if (current.current !== created.id) return
@@ -56,8 +57,9 @@ export default function ChargeScreen() {
       setPayment({ ...latest, url: created.url })
       if (latest.status === 'paid') {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        // Keep polling briefly so the points line updates once they're minted.
-        if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0') return
+        // Keep polling briefly (up to 30s) so the points line updates once they're minted.
+        paidAt ??= Date.now()
+        if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0' || Date.now() - paidAt > 30_000) return
       } else if (latest.status !== 'pending') {
         return
       }
@@ -118,7 +120,9 @@ export default function ChargeScreen() {
             {payment.rail === 'paypal' && <Text style={ui.muted}>Paid with PayPal</Text>}
             {payment.rail === 'solana' && payment.points && payment.points !== '0' && (
               <Text style={ui.body}>
-                {payment.points} points {payment.pointsIssued ? 'sent to' : 'on their way to'} the customer
+                {payment.pointsIssued
+                  ? `${payment.points} points sent to the customer`
+                  : `${payment.points} points will be sent to the customer`}
               </Text>
             )}
           </View>

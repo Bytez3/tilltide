@@ -5,22 +5,29 @@ import { sql, type MerchantRow, type PaymentRow } from '../db'
 import { rpc } from '../solana'
 import { checkPayPalPayment, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
 
+/** Per payment: reference transactions already known not to be a valid payment (see findPayment). */
+const rejectedByPayment = new Map<string, Set<string>>()
+
 /** Checks one open payment against its rail. Returns true if it became paid (or failed, for PayPal). */
 export async function checkPayment(payment: PaymentRow, merchant: MerchantRow): Promise<boolean> {
   if (payment.rail === 'paypal') return checkPayPalPayment(payment)
   if (payment.status === 'paid') return false
   if (!payment.reference || payment.tokenSymbol === 'USD') return false
 
-  const found = await findPayment(rpc, address(payment.reference), {
-    recipient: address(merchant.wallet),
-    token: config.tokens[payment.tokenSymbol],
-    amount: payment.amount,
-  })
+  let rejected = rejectedByPayment.get(payment.id)
+  if (!rejected) rejectedByPayment.set(payment.id, (rejected = new Set()))
+  const found = await findPayment(
+    rpc,
+    address(payment.reference),
+    { recipient: address(merchant.wallet), token: config.tokens[payment.tokenSymbol], amount: payment.amount },
+    rejected,
+  )
   if (found.status === 'mismatch') {
     if (found.reason !== payment.failureReason) await notePaymentProblem(payment, found.reason)
     return false
   }
   if (found.status !== 'paid') return false
+  rejectedByPayment.delete(payment.id)
   if (!(await markPaymentPaid(payment, found.payment))) return false
 
   // Points mint in the background so "Paid ✓" isn't held up by a second transaction.
@@ -61,9 +68,17 @@ async function tick() {
       and not (rail = 'paypal' and paypal_capture_id is not null)`
 
   if (ticks % 20 === 0) {
-    // About once a minute: catch customers who paid an expired Solana request (the money still arrived).
+    // About once a minute: catch money that arrived after a request closed. Solana: the customer paid
+    // late. PayPal: a capture finished just as the request expired (it is never captured after expiry).
     await checkAll(await sql<PaymentRow[]>`
-      select * from payments where rail = 'solana' and status in ('expired', 'failed') and created_at > now() - interval '24 hours'`)
+      select * from payments
+      where created_at > now() - interval '24 hours'
+        and ((rail = 'solana' and status in ('expired', 'failed')) or (rail = 'paypal' and status = 'expired'))`)
+    // Forget dust caches for requests that can no longer be paid.
+    for (const id of rejectedByPayment.keys()) {
+      const [row] = await sql`select 1 from payments where id = ${id} and created_at > now() - interval '24 hours' and status <> 'paid'`
+      if (!row) rejectedByPayment.delete(id)
+    }
 
     // Retry points that failed or never confirmed. issuePointsForPayment checks the chain before resending.
     if (!config.pointsMint || !config.pointsAuthoritySecret) return
