@@ -99,3 +99,7 @@ create table if not exists agent_usage (
   model text,
   primary key (merchant_id, day)
 );
+
+-- Platform fee on sweeps (part of the gross amount, paid to the treasury in the same transaction).
+alter table sweeps add column if not exists fee_amount bigint not null default 0;
+alter table sweeps add column if not exists fee_wallet text;

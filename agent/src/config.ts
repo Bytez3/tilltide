@@ -9,6 +9,8 @@ function required(name: string): string {
 
 const cluster = (process.env.SOLANA_CLUSTER ?? 'devnet') as Cluster
 if (cluster !== 'devnet' && cluster !== 'mainnet') throw new Error(`Unknown SOLANA_CLUSTER ${cluster}`)
+const feeBps = Number(process.env.SWEEP_FEE_BPS ?? 50)
+if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps > 500) throw new Error('SWEEP_FEE_BPS must be a whole number from 0 to 500')
 
 export const config = {
   port: Number(process.env.PORT ?? 8787),
@@ -38,6 +40,11 @@ export const config = {
     /** Chat questions are short lookups; low effort keeps answers fast and cheap. */
     effort: (process.env.AGENT_EFFORT ?? 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
     dailyLimit: Number(process.env.AGENT_DAILY_LIMIT ?? 50),
+  },
+  /** Tilltide's fee on sweeps. Off unless a treasury wallet is set. */
+  sweepFee: {
+    treasury: process.env.TREASURY_WALLET ? (address(process.env.TREASURY_WALLET) as Address) : null,
+    bps: feeBps,
   },
   /** Shared secret Cloudflare adds as x-tilltide-origin. When set, requests without it are refused. */
   originSecret: process.env.ORIGIN_SECRET || null,

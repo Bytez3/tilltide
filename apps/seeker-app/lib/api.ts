@@ -38,6 +38,10 @@ export interface Sweep {
   id: string
   amount: string
   display: string
+  toOwner: string
+  feeAmount: string
+  feeDisplay: string
+  feeWallet: string | null
   decimals: number
   token: 'USDC' | 'PYUSD'
   toWallet: string

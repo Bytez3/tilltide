@@ -45,6 +45,7 @@ export function useSignSweep(merchant: Merchant | null) {
         to: address(latest.toWallet),
         token: TOKENS[merchant.cluster][latest.token],
         amount: BigInt(latest.amount),
+        fee: latest.feeWallet ? { to: address(latest.feeWallet), amount: BigInt(latest.feeAmount) } : undefined,
         sweepId: latest.id,
       })
       const message = pipe(

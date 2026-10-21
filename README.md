@@ -57,7 +57,7 @@ pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 22 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 25 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
@@ -96,6 +96,12 @@ API (devnet): https://api-production-83900.up.railway.app. It's on Railway, proj
 - **M3, by Nov 12 (PayPal AI Hackathon):** agent chat, end-of-day reconciliation, sweep with confirm step, 2-minute demo video.
 - **M4, by Nov 15 (Breakpoint London):** live demo build, mainnet pilot with 1–2 Cornwall shops, extract `agent-pay-kit` with docs.
 - **After Breakpoint:** SKR bonus points for Seeker users (Solana Mobile grant), Colosseum Eternal, Solana Foundation grant.
+
+## Business model
+
+Tilltide takes **0.5% of each sweep**: when the owner moves takings from the till to their own wallet, the same transaction sends the fee to Tilltide's treasury. The confirm card shows "99.50 to you, 0.50 Tilltide fee" before the owner signs, and the server checks both transfers onchain. The fee is off until `TREASURY_WALLET` is set; the rate is set with `SWEEP_FEE_BPS` (default 50 = 0.5%, max 500).
+
+Planned: a Pro plan (more agent questions, staff logins, exports), and PayPal platform fees once PayPal partner approval is in place.
 
 ## Funding routes
 

@@ -63,6 +63,9 @@ export interface SweepRow {
   status: SweepStatus
   signature: string | null
   submittedAt: Date | null
+  /** Part of `amount` that goes to Tilltide's treasury; the owner receives amount - feeAmount. */
+  feeAmount: bigint
+  feeWallet: string | null
   /** While 'signing': the block height after which the wallet's transaction can no longer land. */
   signingValidUntil: bigint | null
   error: string | null

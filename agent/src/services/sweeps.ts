@@ -1,6 +1,6 @@
 import { address, type Signature } from '@solana/kit'
 import { findAssociatedTokenPda } from '@solana-program/token'
-import { fromBaseUnits, sweepMemo, verifyPayment } from '@tilltide/agent-pay-kit'
+import { fromBaseUnits, sweepFee, sweepMemo, verifyPayment } from '@tilltide/agent-pay-kit'
 import { config } from '../config'
 import { sql, type MerchantRow, type SweepRow } from '../db'
 import { rpc } from '../solana'
@@ -37,11 +37,15 @@ export async function proposeSweep(merchant: MerchantRow, amount: bigint, reason
   const balance = await tillBalance(merchant)
   if (amount > balance) throw new SweepError(`The till only holds ${fromBaseUnits(balance, token.decimals)} ${token.symbol}`)
 
+  const { treasury, bps } = config.sweepFee
+  const fee = treasury ? sweepFee(amount, bps) : 0n
+
   // One open proposal at a time keeps the confirm step unambiguous.
   await sql`update sweeps set status = 'cancelled' where merchant_id = ${merchant.id} and status = 'proposed'`
   const [row] = await sql<SweepRow[]>`
-    insert into sweeps (merchant_id, amount, token_symbol, to_wallet, reason)
-    values (${merchant.id}, ${amount.toString()}, ${token.symbol}, ${merchant.ownerWallet}, ${reason})
+    insert into sweeps (merchant_id, amount, token_symbol, to_wallet, reason, fee_amount, fee_wallet)
+    values (${merchant.id}, ${amount.toString()}, ${token.symbol}, ${merchant.ownerWallet}, ${reason},
+      ${fee.toString()}, ${fee > 0n ? treasury : null})
     returning *`
   return row!
 }
@@ -65,7 +69,7 @@ async function checkSweepTransaction(merchant: MerchantRow, sweep: SweepRow, sig
   const result = await verifyPayment(rpc, signature, {
     recipient: address(sweep.toWallet),
     token: config.tokens[sweep.tokenSymbol],
-    amount: sweep.amount,
+    amount: sweep.amount - sweep.feeAmount,
   })
   if (!result.ok && result.retryable) return { kind: 'retry' }
   if (!result.memos?.includes(sweepMemo(sweep.id))) {
@@ -73,6 +77,14 @@ async function checkSweepTransaction(merchant: MerchantRow, sweep: SweepRow, sig
   }
   if (!result.ok) return { kind: 'bad', reason: `The sweep transaction landed but doesn't add up: ${result.reason}` }
   if (result.payer !== merchant.wallet) return { kind: 'bad', reason: 'The sweep transaction was not sent from the till wallet' }
+  if (sweep.feeAmount > 0n && sweep.feeWallet) {
+    const fee = await verifyPayment(rpc, signature, {
+      recipient: address(sweep.feeWallet),
+      token: config.tokens[sweep.tokenSymbol],
+      amount: sweep.feeAmount,
+    })
+    if (!fee.ok) return fee.retryable ? { kind: 'retry' } : { kind: 'bad', reason: `The sweep fee didn't add up: ${fee.reason}` }
+  }
   return { kind: 'ok' }
 }
 
@@ -197,6 +209,11 @@ export function serializeSweep(s: SweepRow) {
     id: s.id,
     amount: s.amount.toString(),
     display: fromBaseUnits(s.amount, token.decimals),
+    /** What the owner receives, and Tilltide's fee, both shown on the confirm card. */
+    toOwner: fromBaseUnits(s.amount - s.feeAmount, token.decimals),
+    feeAmount: s.feeAmount.toString(),
+    feeDisplay: fromBaseUnits(s.feeAmount, token.decimals),
+    feeWallet: s.feeWallet,
     decimals: token.decimals,
     token: s.tokenSymbol,
     toWallet: s.toWallet,

@@ -131,7 +131,8 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     // PayPal takings settle to the merchant's PayPal balance, not the till wallet.
     paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount, 0n), token.decimals),
     paypalCaptures: paypalPaid.map((p) => p.paypalCaptureId),
-    sweptToOwnerToday: fromBaseUnits(sweptToday, token.decimals),
+    // Gross amount swept out of the till today (what the owner received plus Tilltide's fee).
+    sweptOutToday: fromBaseUnits(sweptToday, token.decimals),
     // Transfers in or out of the till that Tilltide didn't create. The agent explains these.
     onchainActivityNotInLedger: unmatched,
     explorerCluster: config.cluster,

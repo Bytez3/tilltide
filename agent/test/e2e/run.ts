@@ -184,6 +184,7 @@ async function main() {
     })
 
     const pointsMint = await generateKeyPairSigner()
+    const treasury = await generateKeyPairSigner()
     // Env for the API, then import it (config reads env at import time).
     Object.assign(process.env, {
       POINTS_MINT: pointsMint.address,
@@ -196,6 +197,8 @@ async function main() {
       RATE_LIMIT_AUTH: '1000',
       RATE_LIMIT_PER_IP: '100000',
       AGENT_DAILY_LIMIT: '2',
+      TREASURY_WALLET: treasury.address,
+      SWEEP_FEE_BPS: '50',
       ANTHROPIC_API_KEY: '',
       PAYPAL_CLIENT_ID: 'mock',
       PAYPAL_CLIENT_SECRET: 'mock',
@@ -326,6 +329,19 @@ async function main() {
     }
 
     let tillToken = ''
+
+    /** The sweep transaction exactly as the app builds it, fee included. */
+    async function sweepInstructions(sweep: { id: string; amount: string; feeAmount: string; feeWallet: string | null }, token: any) {
+      const { getSweepInstructions } = await import('@tilltide/agent-pay-kit')
+      return getSweepInstructions({
+        from: till,
+        to: owner.address,
+        token,
+        amount: BigInt(sweep.amount),
+        fee: sweep.feeWallet ? { to: address(sweep.feeWallet), amount: BigInt(sweep.feeAmount) } : undefined,
+        sweepId: sweep.id,
+      })
+    }
 
     /** What the app does to sweep: lock it with the blockhash expiry, have the wallet sign and send, then report. */
     async function sweepLikeTheApp(sweepId: string, instructions: Instruction[]) {
@@ -512,11 +528,15 @@ async function main() {
 
       const { signature, result: submitted } = await sweepLikeTheApp(
         sweep.id,
-        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: BigInt(sweep.amount), sweepId: sweep.id }),
+        await sweepInstructions(sweep, TOKENS.devnet.USDC),
       )
       assert.equal(submitted.status, 200, JSON.stringify(submitted.body))
       assert.equal(submitted.body.status, 'confirmed')
-      assert.equal(await tokenBalance(owner.address, USDC, TOKEN), 10_000_000n)
+      // 0.5% fee: 9.95 to the owner, 0.05 to Tilltide, in the one transaction the owner signed.
+      assert.equal(sweep.toOwner, '9.95')
+      assert.equal(sweep.feeDisplay, '0.05')
+      assert.equal(await tokenBalance(owner.address, USDC, TOKEN), 9_950_000n)
+      assert.equal(await tokenBalance(treasury.address, USDC, TOKEN), 50_000n)
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/cancel`, undefined, tillToken)).status, 400)
 
       // The same signature can't confirm a second proposal.
@@ -542,7 +562,7 @@ async function main() {
       assert.equal((await api('POST', `/shop/sweeps/${second.id}/cancel`, undefined, tillToken)).body.status, 'cancelled')
 
       const recon = await api('GET', '/shop/summary?reconcile=true', undefined, tillToken)
-      assert.equal(recon.body.reconciliation.sweptToOwnerToday, '10')
+      assert.equal(recon.body.reconciliation.sweptOutToday, '10')
       assert.equal(recon.body.reconciliation.onchainActivityNotInLedger.length, 3, 'the sweep is not flagged')
     })
 
@@ -554,7 +574,7 @@ async function main() {
       const sweep = serializeSweep(await proposeSweep(merchant, 500_000n, null))
 
       // Signed but never broadcast: what a dropped transaction looks like.
-      const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 500_000n, sweepId: sweep.id })
+      const instructions = await sweepInstructions(sweep, TOKENS.devnet.USDC)
       const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
       assert.equal((await api('POST', `/shop/sweeps/${sweep.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)).status, 200)
       // Opening the wallet a second time while the first is still live is refused.
@@ -597,7 +617,7 @@ async function main() {
       assert.equal((await api('POST', `/shop/sweeps/${a.id}/check`, undefined, tillToken)).body.status, 'proposed')
 
       // While A is open in the wallet, the agent can't propose B (which would cancel A).
-      const instructions = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 250_000n, sweepId: a.id })
+      const instructions = await sweepInstructions(a, TOKENS.devnet.USDC)
       const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
       await api('POST', `/shop/sweeps/${a.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)
       await assert.rejects(proposeSweep(merchant, 100_000n, null), /still being signed/)
@@ -609,7 +629,7 @@ async function main() {
       // A signed sweep that was cancelled earlier still counts if its memo lands.
       const c2 = serializeSweep(await proposeSweep(merchant, 100_000n, null))
       await api('POST', `/shop/sweeps/${c2.id}/cancel`, undefined, tillToken)
-      const late = await send(till, await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 100_000n, sweepId: c2.id }))
+      const late = await send(till, await sweepInstructions(c2, TOKENS.devnet.USDC))
       assert.equal((await api('POST', `/shop/sweeps/${c2.id}/submit`, { signature: late }, tillToken)).body.status, 'confirmed')
 
       // A signing lock whose blockhash has expired with nothing onchain reopens the sweep.
@@ -621,6 +641,21 @@ async function main() {
       assert.equal(reopened.body.status, 'proposed')
       assert.match(reopened.body.error, /did not send/)
       await api('POST', `/shop/sweeps/${d.id}/cancel`, undefined, tillToken)
+    })
+
+    await step("a sweep that skips Tilltide's fee is caught, not confirmed", async () => {
+      const { proposeSweep, serializeSweep } = await import('../../src/services/sweeps')
+      const { getSweepInstructions, TOKENS } = await import('@tilltide/agent-pay-kit')
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      const sweep = serializeSweep(await proposeSweep(merchant, 200_000n, null))
+      // Full amount to the owner, no fee transfer, but with this sweep's memo.
+      const noFee = await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.USDC, amount: 200_000n, sweepId: sweep.id })
+      const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+      await api('POST', `/shop/sweeps/${sweep.id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)
+      const signature = await send(till, noFee)
+      const r = await api('POST', `/shop/sweeps/${sweep.id}/submit`, { signature }, tillToken)
+      assert.equal(r.body.status, 'failed')
+      assert.match(r.body.error, /fee didn't add up/)
     })
 
     await step('PYUSD (Token-2022): pay, verify, points, sweep', async () => {
@@ -639,10 +674,11 @@ async function main() {
       const sweep = serializeSweep(await proposeSweep(merchant, 3_250_000n, null))
       const { result } = await sweepLikeTheApp(
         sweep.id,
-        await getSweepInstructions({ from: till, to: owner.address, token: TOKENS.devnet.PYUSD, amount: 3_250_000n, sweepId: sweep.id }),
+        await sweepInstructions(sweep, TOKENS.devnet.PYUSD),
       )
       assert.equal(result.body.status, 'confirmed')
-      assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_250_000n)
+      assert.equal(await tokenBalance(owner.address, PYUSD, TOKEN_2022), 3_233_750n)
+      assert.equal(await tokenBalance(treasury.address, PYUSD, TOKEN_2022), 16_250n)
     })
 
     await step('customer points lookup', async () => {

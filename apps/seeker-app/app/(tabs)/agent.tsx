@@ -123,9 +123,14 @@ export default function AgentScreen() {
             <Text style={ui.muted}>Proposed sweep</Text>
             {/* Shown exactly as it will be signed. */}
             <Text style={ui.h1}>
-              {sweep.display} {sweep.token}
+              {sweep.toOwner} {sweep.token}
             </Text>
             <Text style={ui.body}>To owner wallet {shortAddress(sweep.toWallet)}</Text>
+            {sweep.feeWallet && sweep.feeAmount !== '0' && (
+              <Text style={ui.muted}>
+                Tilltide fee {sweep.feeDisplay} {sweep.token} · {sweep.display} {sweep.token} leaves the till
+              </Text>
+            )}
             <Text style={[ui.muted, { fontFamily: 'monospace' }]} selectable>
               {sweep.toWallet}
             </Text>

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { address } from '@solana/kit'
 import {
   calculatePoints,
+  sweepFee,
   encodeTransferRequest,
   fromBaseUnits,
   parseTransferRequest,
@@ -63,5 +64,15 @@ describe('loyalty points', () => {
     const rule = { pointsPerUnit: 1, bonusMultiplier: 2 }
     expect(calculatePoints(toBaseUnits('10', 6), 6, rule, false)).toBe(10n)
     expect(calculatePoints(toBaseUnits('10', 6), 6, rule, true)).toBe(20n)
+  })
+})
+
+describe('sweep fee', () => {
+  it('takes basis points of the gross amount, rounded down', () => {
+    expect(sweepFee(100_000_000n, 50)).toBe(500_000n) // 0.5% of 100 USDC
+    expect(sweepFee(199n, 50)).toBe(0n)
+    expect(sweepFee(100_000_000n, 0)).toBe(0n)
+    expect(() => sweepFee(1n, -1)).toThrow()
+    expect(() => sweepFee(1n, 1.5)).toThrow()
   })
 })
