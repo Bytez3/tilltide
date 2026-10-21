@@ -16,6 +16,9 @@ export interface Merchant {
   /** What one point is worth when spent, e.g. "0.01". */
   pointValue: string
   redeemMaxPercent: number
+  /** 'staff' on a paired till device: can take payments, nothing else. */
+  role?: 'owner' | 'staff'
+  staffLabel?: string | null
   paypal: {
     status: 'none' | 'pending' | 'connected'
     email: string | null
@@ -145,6 +148,10 @@ export const api = {
   verifySignIn: (address: string, signedMessage: string, signature: string) =>
     request<{ token: string; wallet: string }>('/auth/verify', post({ address, signedMessage, signature })),
   logout: () => request<{ ok: true }>('/shop/logout', post()),
+  pairStaff: (code: string) => request<{ token: string; label: string }>('/auth/staff', post({ code })),
+  createStaffInvite: (label: string) => request<{ code: string; expiresInMinutes: number }>('/shop/staff/invites', post({ label })),
+  listStaff: () => request<{ id: string; label: string; since: string }[]>('/shop/staff'),
+  removeStaff: (id: string) => request<{ ok: true }>(`/shop/staff/${id}/remove`, post()),
 
   getShop: () => request<Merchant>('/shop'),
   registerShop: (name: string) => request<Merchant>('/shop', post({ name })),

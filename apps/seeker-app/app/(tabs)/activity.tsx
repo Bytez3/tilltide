@@ -18,7 +18,7 @@ const STATUS_COLOUR: Record<Payment['status'], string> = {
 }
 
 export default function ActivityScreen() {
-  const { merchant } = useMerchant()
+  const { merchant, isStaff } = useMerchant()
   const payments = useQuery({
     queryKey: ['payments', merchant?.id],
     queryFn: () => api.listPayments(),
@@ -109,7 +109,7 @@ export default function ActivityScreen() {
                 Wallet {Number(s.byRail.solana).toFixed(2)} · PayPal {Number(s.byRail.paypal).toFixed(2)}
               </Text>
             )}
-            {sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
+            {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
             {sweepAmount !== null && (
               <View style={{ gap: 8 }}>
                 <Text style={ui.body}>Amount to move from the till ({merchant.token})</Text>
@@ -139,7 +139,7 @@ export default function ActivityScreen() {
           </View>
           <View style={{ alignItems: 'flex-end', gap: 4 }}>
             <Text style={{ color: STATUS_COLOUR[item.status], fontWeight: '600', textTransform: 'capitalize' }}>{item.status}</Text>
-            {item.rail === 'paypal' && item.status === 'paid' && (
+            {!isStaff && item.rail === 'paypal' && item.status === 'paid' && (
               <Pressable accessibilityRole="button" onPress={() => startRefund(item)}>
                 <Text style={{ color: colors.sea, fontWeight: '600' }}>Refund</Text>
               </Pressable>

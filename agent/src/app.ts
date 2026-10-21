@@ -14,7 +14,7 @@ import { buildRedeemTransaction, RedeemError } from './services/redeem'
 import { renderReceipt } from './receipt'
 import { clientIp, rateLimit, requireOrigin } from './rate-limit'
 import { reserveAgentRequest, UsageLimitError } from './services/usage'
-import { AuthError, createNonce, revokeToken, verifySignIn, walletForToken } from './auth'
+import { AuthError, createNonce, createStaffInvite, redeemStaffInvite, revokeToken, sessionForToken, verifySignIn, type Session } from './auth'
 import { config } from './config'
 import { isDate } from './dates'
 import { FxError } from './fx'
@@ -215,17 +215,45 @@ app.post('/auth/verify', async (c) => {
   }
 })
 
+/** A staff till device pairs with a shop using the owner's one-time code. */
+app.post('/auth/staff', async (c) => {
+  const input = await body(c, z.object({ code: z.string().max(20) }))
+  try {
+    const { token, label } = await redeemStaffInvite(input.code)
+    return c.json({ token, label })
+  } catch (err) {
+    if (err instanceof AuthError) throw new HTTPException(401, { message: err.message })
+    throw err
+  }
+})
+
 // ---- The signed-in shop ---------------------------------------------------------------
 // Everything under /shop is scoped to the wallet that signed in. There is no way to name another shop.
 
-type ShopEnv = { Variables: { wallet: string; token: string } }
+type ShopEnv = { Variables: { wallet: string; token: string; session: Session } }
+
+/**
+ * What a staff device may do: take and follow payments, see today's summary. Everything else
+ * (money movement, refunds, settings, the agent) is owner-only. Default deny: new routes are owner-only.
+ */
+const STAFF_ALLOWED: [string, RegExp][] = [
+  ['GET', /^\/shop\/?$/],
+  ['POST', /^\/shop\/payments$/],
+  ['GET', /^\/shop\/payments(\/[^/]+)?$/],
+  ['GET', /^\/shop\/summary$/],
+  ['POST', /^\/shop\/logout$/],
+]
 const shop = new Hono<ShopEnv>()
 
 shop.use(async (c, next) => {
   const token = c.req.header('authorization')?.match(/^Bearer ([A-Za-z0-9_-]{20,100})$/)?.[1]
-  const wallet = token ? await walletForToken(token) : null
-  if (!wallet || !token) throw new HTTPException(401, { message: 'Sign in again' })
-  c.set('wallet', wallet)
+  const session = token ? await sessionForToken(token) : null
+  if (!session || !token) throw new HTTPException(401, { message: 'Sign in again' })
+  if (session.role === 'staff' && !STAFF_ALLOWED.some(([m, re]) => m === c.req.method && re.test(c.req.path))) {
+    throw new HTTPException(403, { message: 'Only the shop owner can do this' })
+  }
+  c.set('session', session)
+  c.set('wallet', session.wallet ?? '')
   c.set('token', token)
   await next()
 })
@@ -235,13 +263,46 @@ shop.post('/logout', async (c) => {
   return c.json({ ok: true })
 })
 
-async function myShop(c: { get(key: 'wallet'): string }): Promise<MerchantRow> {
-  const [merchant] = await sql<MerchantRow[]>`select * from merchants where wallet = ${c.get('wallet')}`
+async function myShop(c: { get(key: 'session'): Session }): Promise<MerchantRow> {
+  const session = c.get('session')
+  const [merchant] =
+    session.role === 'staff'
+      ? await sql<MerchantRow[]>`select * from merchants where id = ${session.merchantId}`
+      : await sql<MerchantRow[]>`select * from merchants where wallet = ${session.wallet}`
   if (!merchant) throw new HTTPException(404, { message: 'No shop for this wallet yet' })
   return merchant
 }
 
-shop.get('/', async (c) => c.json(serializeMerchant(await myShop(c))))
+shop.get('/', async (c) => {
+  const session = c.get('session')
+  return c.json({ ...serializeMerchant(await myShop(c)), role: session.role, staffLabel: session.label })
+})
+
+/** Owner: create a pairing code for a staff till device. */
+shop.post('/staff/invites', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ label: z.string().trim().min(1).max(40) }))
+  return c.json(await createStaffInvite(merchant.id, input.label), 201)
+})
+
+/** Owner: staff devices currently signed in. */
+shop.get('/staff', async (c) => {
+  const merchant = await myShop(c)
+  const rows = await sql<{ id: string; label: string; createdAt: Date }[]>`
+    select id, label, created_at from sessions
+    where role = 'staff' and merchant_id = ${merchant.id} and expires_at > now() order by created_at`
+  return c.json(rows.map((r) => ({ id: r.id, label: r.label, since: r.createdAt.toISOString() })))
+})
+
+/** Owner: sign a staff device out, immediately. */
+shop.post('/staff/:id/remove', async (c) => {
+  const merchant = await myShop(c)
+  const id = c.req.param('id')
+  if (!isUuid(id)) throw new HTTPException(404, { message: 'Staff device not found' })
+  const rows = await sql`delete from sessions where id = ${id} and role = 'staff' and merchant_id = ${merchant.id} returning id`
+  if (!rows.length) throw new HTTPException(404, { message: 'Staff device not found' })
+  return c.json({ ok: true })
+})
 
 /** Registers the shop for the signed-in till wallet (or returns it if it exists). */
 shop.post('/', async (c) => {
@@ -450,7 +511,7 @@ shop.post('/sweeps', async (c) => {
   }
 })
 
-async function mySweep(c: { get(key: 'wallet'): string; req: { param(name: 'id'): string } }) {
+async function mySweep(c: { get(key: 'session'): Session; req: { param(name: 'id'): string } }) {
   const merchant = await myShop(c)
   const id = c.req.param('id')
   const sweep = isUuid(id) ? await getSweep(merchant, id) : null
@@ -518,7 +579,7 @@ shop.get('/refunds', async (c) => {
   return c.json(rows.map(serializeRefund))
 })
 
-async function myRefund(c: { get(key: 'wallet'): string; req: { param(name: 'id'): string } }) {
+async function myRefund(c: { get(key: 'session'): Session; req: { param(name: 'id'): string } }) {
   const merchant = await myShop(c)
   const id = c.req.param('id')
   const refund = isUuid(id) ? await getRefund(merchant, id) : null

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons'
 import { Tabs } from 'expo-router'
 import { colors } from '@/constants/theme'
+import { useMerchant } from '@/features/merchant/merchant-provider'
 
 type IconName = keyof typeof Ionicons.glyphMap
 
@@ -10,6 +11,8 @@ const tab = (title: string, icon: IconName) => ({
 })
 
 export default function TabsLayout() {
+  // Staff devices take payments only: no agent (it can propose moving money).
+  const { isStaff } = useMerchant()
   return (
     <Tabs
       screenOptions={{
@@ -21,7 +24,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" options={tab('Charge', 'qr-code-outline')} />
       <Tabs.Screen name="activity" options={tab('Activity', 'receipt-outline')} />
-      <Tabs.Screen name="agent" options={tab('Agent', 'chatbubble-ellipses-outline')} />
+      <Tabs.Screen name="agent" options={{ ...tab('Agent', 'chatbubble-ellipses-outline'), href: isStaff ? null : undefined }} />
       <Tabs.Screen name="settings" options={tab('Settings', 'settings-outline')} />
     </Tabs>
   )

@@ -7,7 +7,9 @@ import { useWallet } from '@/features/wallet/wallet'
 
 /** First-run: name the shop and connect the till wallet over Mobile Wallet Adapter. */
 export function SetupCard() {
-  const { signInAndSetUp } = useMerchant()
+  const { signInAndSetUp, pairStaff } = useMerchant()
+  const [staffMode, setStaffMode] = useState(false)
+  const [code, setCode] = useState('')
   const { isTestWallet } = useWallet()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -17,7 +19,8 @@ export function SetupCard() {
     setBusy(true)
     setError(null)
     try {
-      await signInAndSetUp(name)
+      if (staffMode) await pairStaff(code)
+      else await signInAndSetUp(name)
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       setError(
@@ -28,6 +31,21 @@ export function SetupCard() {
     } finally {
       setBusy(false)
     }
+  }
+
+  if (staffMode) {
+    return (
+      <View style={ui.card}>
+        <Text style={ui.h2}>Pair a staff till</Text>
+        <Text style={ui.muted}>Ask the owner for a pairing code (Settings → Staff devices). Staff can take payments but can&apos;t move money.</Text>
+        <TextInput style={ui.input} placeholder="1234-5678" keyboardType="number-pad" value={code} onChangeText={setCode} maxLength={9} />
+        <Button title="Pair this device" onPress={submit} disabled={code.replace(/\D/g, '').length !== 8} loading={busy} />
+        {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}
+        <Text style={[ui.muted, { textAlign: 'center', marginTop: 4 }]} onPress={() => (setStaffMode(false), setError(null))}>
+          I&apos;m the owner
+        </Text>
+      </View>
+    )
   }
 
   return (
@@ -44,6 +62,9 @@ export function SetupCard() {
       <TextInput style={ui.input} placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
       <Button title="Sign in with wallet" onPress={submit} loading={busy} />
       {error && <Text style={[ui.muted, { color: '#B42318' }]}>{error}</Text>}
+      <Text style={[ui.muted, { textAlign: 'center', marginTop: 4 }]} onPress={() => (setStaffMode(true), setError(null))}>
+        I&apos;m staff: pair this till
+      </Text>
     </View>
   )
 }

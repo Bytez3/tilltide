@@ -164,3 +164,21 @@ alter table payments add column if not exists currency text not null default 'US
 alter table payments add column if not exists token_amount bigint;
 alter table payments add column if not exists fx_rate bigint not null default 1000000;
 alter table refunds add column if not exists currency text not null default 'USD';
+
+-- Staff till devices: sessions with role 'staff', tied to a shop instead of a wallet, paired with a
+-- single-use code the owner creates.
+alter table sessions add column if not exists id uuid not null default gen_random_uuid();
+alter table sessions add column if not exists role text not null default 'owner';
+alter table sessions add column if not exists merchant_id uuid references merchants(id);
+alter table sessions add column if not exists label text;
+alter table sessions alter column wallet drop not null;
+alter table sessions drop constraint if exists sessions_role_check;
+alter table sessions add constraint sessions_role_check check (
+  (role = 'owner' and wallet is not null) or (role = 'staff' and merchant_id is not null));
+create table if not exists staff_invites (
+  code_hash text primary key,
+  merchant_id uuid not null references merchants(id),
+  label text not null,
+  expires_at timestamptz not null,
+  used_at timestamptz
+);

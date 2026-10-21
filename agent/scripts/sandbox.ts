@@ -79,7 +79,7 @@ Object.assign(process.env, {
   PORT: String(API_PORT),
   AUTH_DOMAIN: 'sandbox.tilltide.test',
   PUBLIC_URL: `http://localhost:${API_PORT}`,
-  CORS_ORIGINS: process.env.CORS_ORIGINS ?? 'http://localhost:8081',
+  CORS_ORIGINS: process.env.CORS_ORIGINS ?? 'http://localhost:8081,http://127.0.0.1:8081',
   POINTS_MINT: pointsMint.address,
   POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
   TREASURY_WALLET: treasury.address,

@@ -6,6 +6,8 @@ import { useWallet } from '@/features/wallet/wallet'
 import { AppConfig } from '@/constants/app-config'
 
 const sessionKey = (wallet: string) => `tilltide:session:${wallet}`
+/** A staff device has no wallet; its session is stored on its own. */
+const STAFF_KEY = 'tilltide:staff-session'
 
 interface MerchantContextValue {
   merchant: Merchant | null
@@ -16,6 +18,9 @@ interface MerchantContextValue {
   /** Replace the cached shop (e.g. after re-checking PayPal). */
   replace: (merchant: Merchant) => void
   signOut: () => Promise<void>
+  /** Staff device: pair with the owner's one-time code. */
+  pairStaff: (code: string) => Promise<void>
+  isStaff: boolean
 }
 
 const MerchantContext = createContext<MerchantContextValue | null>(null)
@@ -29,6 +34,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
     setSession(null)
     setMerchant(null)
     if (wallet) await AsyncStorage.removeItem(sessionKey(wallet)).catch(() => {})
+    else await AsyncStorage.removeItem(STAFF_KEY).catch(() => {})
   }, [])
 
   // Restore the session for the connected wallet.
@@ -37,7 +43,19 @@ export function MerchantProvider({ children }: PropsWithChildren) {
     async function restore() {
       setLoading(true)
       try {
-        if (!account) return clearSession()
+        if (!account) {
+          // No wallet: maybe this is a paired staff device.
+          const staffToken = await AsyncStorage.getItem(STAFF_KEY)
+          if (!staffToken) {
+            setSession(null)
+            setMerchant(null)
+            return
+          }
+          setSession(staffToken, () => clearSession())
+          const shop = await api.getShop().catch(() => null)
+          if (!cancelled) setMerchant(shop)
+          return
+        }
         const token = await AsyncStorage.getItem(sessionKey(account.address))
         if (!token) return clearSession()
         setSession(token, () => clearSession(account.address))
@@ -93,12 +111,27 @@ export function MerchantProvider({ children }: PropsWithChildren) {
 
   const signOut = useCallback(async () => {
     await api.logout().catch(() => {})
+    if (merchant?.role === 'staff') return clearSession()
     await clearSession(account?.address)
     await disconnect().catch(() => {})
-  }, [account?.address, clearSession, disconnect])
+  }, [account?.address, clearSession, disconnect, merchant?.role])
+
+  const pairStaff = useCallback(
+    async (code: string) => {
+      const { token } = await api.pairStaff(code)
+      await AsyncStorage.setItem(STAFF_KEY, token)
+      setSession(token, () => clearSession())
+      setMerchant(await api.getShop())
+    },
+    [clearSession],
+  )
 
   return (
-    <MerchantContext.Provider value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant }}>{children}</MerchantContext.Provider>
+    <MerchantContext.Provider
+      value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant, pairStaff, isStaff: merchant?.role === 'staff' }}
+    >
+      {children}
+    </MerchantContext.Provider>
   )
 }
 

@@ -10,7 +10,11 @@ import { AppConfig } from '@/constants/app-config'
 import { shortAddress } from '@/lib/format'
 
 export default function SettingsScreen() {
-  const { merchant, update, signOut, replace } = useMerchant()
+  const { merchant, update, signOut, replace, isStaff } = useMerchant()
+  const [staffLabel, setStaffLabel] = useState('')
+  const [staffCode, setStaffCode] = useState<string | null>(null)
+  const [staffList, setStaffList] = useState<{ id: string; label: string; since: string }[]>([])
+  const [staffMessage, setStaffMessage] = useState<string | null>(null)
   const [paypalEmail, setPaypalEmail] = useState('')
   const [paypalBusy, setPaypalBusy] = useState(false)
   const [paypalMessage, setPaypalMessage] = useState<string | null>(null)
@@ -103,6 +107,30 @@ export default function SettingsScreen() {
     }
   }
 
+  useEffect(() => {
+    if (merchant && !isStaff) api.listStaff().then(setStaffList).catch(() => {})
+  }, [merchant, isStaff])
+
+  async function addStaff() {
+    setStaffMessage(null)
+    try {
+      const invite = await api.createStaffInvite(staffLabel.trim() || 'Staff till')
+      setStaffCode(`${invite.code} (valid for ${invite.expiresInMinutes} minutes, once)`)
+      setStaffLabel('')
+    } catch (e) {
+      setStaffMessage(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function removeStaff(id: string) {
+    try {
+      await api.removeStaff(id)
+      setStaffList(await api.listStaff())
+    } catch (e) {
+      setStaffMessage(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   async function checkPoints() {
     setPoints(null)
     if (!isAddress(lookup.trim())) return setPoints('Not a Solana address')
@@ -112,7 +140,12 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={ui.screen} contentContainerStyle={ui.content}>
-      {merchant ? (
+      {merchant && isStaff ? (
+        <View style={ui.card}>
+          <Text style={ui.h2}>{merchant.name}</Text>
+          <Text style={ui.muted}>Staff till{merchant.staffLabel ? `: ${merchant.staffLabel}` : ''}. Takes payments; the owner manages money and settings.</Text>
+        </View>
+      ) : merchant ? (
         <View style={ui.card}>
           <Text style={ui.h2}>{merchant.name}</Text>
           <Text style={ui.muted}>
@@ -167,7 +200,30 @@ export default function SettingsScreen() {
         <SetupCard />
       )}
 
-      {merchant && merchant.paypalEnabled && (
+      {merchant && !isStaff && (
+        <View style={ui.card}>
+          <Text style={ui.h2}>Staff devices</Text>
+          <Text style={ui.muted}>Let staff take payments on their own phone. They can&apos;t move money, refund or change settings.</Text>
+          {staffList.map((d) => (
+            <View key={d.id} style={[ui.row, { justifyContent: 'space-between' }]}>
+              <Text style={ui.body}>{d.label}</Text>
+              <Text style={{ color: colors.danger, fontWeight: '600' }} onPress={() => removeStaff(d.id)}>
+                Remove
+              </Text>
+            </View>
+          ))}
+          <TextInput style={ui.input} placeholder="Name, e.g. Saturday till" value={staffLabel} onChangeText={setStaffLabel} maxLength={40} />
+          <Button title="Add staff device" variant="secondary" onPress={addStaff} />
+          {staffCode && (
+            <Text style={[ui.h2, { color: colors.sea }]} selectable>
+              Pairing code: {staffCode}
+            </Text>
+          )}
+          {staffMessage && <Text style={ui.muted}>{staffMessage}</Text>}
+        </View>
+      )}
+
+      {merchant && !isStaff && merchant.paypalEnabled && (
         <View style={ui.card}>
           <Text style={ui.h2}>PayPal</Text>
           {merchant.paypal.status === 'connected' ? (

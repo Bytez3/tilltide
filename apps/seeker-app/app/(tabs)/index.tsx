@@ -13,7 +13,7 @@ import { AppConfig } from '@/constants/app-config'
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 
 export default function ChargeScreen() {
-  const { merchant, loading } = useMerchant()
+  const { merchant, loading, isStaff } = useMerchant()
   const [amount, setAmount] = useState('')
   // PayPal first: most customers have PayPal or a card; wallets are the second option.
   const [rail, setRail] = useState<Rail>('paypal')
@@ -236,7 +236,9 @@ export default function ChargeScreen() {
         />
       )}
       {paypalNotConnected && (
-        <Text style={[ui.muted, { color: colors.warn }]}>Connect your PayPal in Settings to take PayPal payments.</Text>
+        <Text style={[ui.muted, { color: colors.warn }]}>
+          {isStaff ? 'PayPal is not set up yet. Ask the owner to connect PayPal, or take a wallet payment.' : 'Connect your PayPal in Settings to take PayPal payments.'}
+        </Text>
       )}
       {activeRail === 'solana' && merchant.pointsMint && (
         <Pressable

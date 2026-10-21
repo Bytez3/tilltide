@@ -84,11 +84,50 @@ function hashToken(token: string) {
   return createHash('sha256').update(token).digest('hex')
 }
 
-/** The wallet a bearer token belongs to, or null. */
-export async function walletForToken(token: string): Promise<string | null> {
-  const [row] = await sql<{ wallet: string }[]>`
-    select wallet from sessions where token_hash = ${hashToken(token)} and expires_at > now()`
-  return row?.wallet ?? null
+export interface Session {
+  id: string
+  role: 'owner' | 'staff'
+  /** Owner sessions: the till wallet that signed in. */
+  wallet: string | null
+  /** Staff sessions: the shop they were paired with. */
+  merchantId: string | null
+  label: string | null
+}
+
+/** The session a bearer token belongs to, or null. */
+export async function sessionForToken(token: string): Promise<Session | null> {
+  const [row] = await sql<Session[]>`
+    select id, role, wallet, merchant_id, label from sessions where token_hash = ${hashToken(token)} and expires_at > now()`
+  return row ?? null
+}
+
+const STAFF_INVITE_TTL_MIN = 15
+const STAFF_SESSION_DAYS = 30
+
+/** A single-use pairing code for a staff till device (shown once to the owner). */
+export async function createStaffInvite(merchantId: string, label: string) {
+  const digits = Array.from(randomBytes(8), (b) => (b % 10).toString()).join('')
+  const code = `${digits.slice(0, 4)}-${digits.slice(4)}`
+  await sql`
+    insert into staff_invites (code_hash, merchant_id, label, expires_at)
+    values (${hashToken(code)}, ${merchantId}, ${label}, now() + ${`${STAFF_INVITE_TTL_MIN} minutes`}::interval)`
+  return { code, expiresInMinutes: STAFF_INVITE_TTL_MIN }
+}
+
+/** Pairs a staff device: trades an unused, unexpired code for a staff session. */
+export async function redeemStaffInvite(code: string) {
+  const normal = code.replace(/\D/g, '')
+  if (normal.length !== 8) throw new AuthError('That pairing code is not valid')
+  const [invite] = await sql<{ merchantId: string; label: string }[]>`
+    update staff_invites set used_at = now()
+    where code_hash = ${hashToken(`${normal.slice(0, 4)}-${normal.slice(4)}`)} and used_at is null and expires_at > now()
+    returning merchant_id, label`
+  if (!invite) throw new AuthError('That pairing code is not valid, already used, or expired')
+  const token = randomBytes(32).toString('base64url')
+  await sql`
+    insert into sessions (token_hash, role, merchant_id, label, expires_at)
+    values (${hashToken(token)}, 'staff', ${invite.merchantId}, ${invite.label}, now() + ${`${STAFF_SESSION_DAYS} days`}::interval)`
+  return { token, merchantId: invite.merchantId, label: invite.label }
 }
 
 export async function revokeToken(token: string) {

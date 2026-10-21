@@ -349,6 +349,60 @@ async function main() {
       assert.equal((await api('GET', '/shop', undefined, otherToken)).status, 401, 'logout revokes the session')
     })
 
+    await step('staff till: pair with a one-time code; take payments; never move money, refund or change settings', async () => {
+      const invite = await api('POST', '/shop/staff/invites', { label: 'Saturday till' }, tillToken)
+      assert.equal(invite.status, 201)
+      assert.match(invite.body.code, /^\d{4}-\d{4}$/)
+      const paired = await api('POST', '/auth/staff', { code: invite.body.code.replace('-', ' ') })
+      assert.equal(paired.status, 200, JSON.stringify(paired.body))
+      const staff = paired.body.token
+      assert.equal((await api('POST', '/auth/staff', { code: invite.body.code })).status, 401, 'single use')
+      assert.equal((await api('POST', '/auth/staff', { code: '0000-0000' })).status, 401)
+
+      const shop = await api('GET', '/shop', undefined, staff)
+      assert.equal(shop.body.role, 'staff')
+      assert.equal(shop.body.name, 'Pasty Shop')
+      const sale = await api('POST', '/shop/payments', { amount: '1.00' }, staff)
+      assert.equal(sale.status, 201)
+      assert.equal((await api('GET', `/shop/payments/${sale.body.id}`, undefined, staff)).status, 200)
+      assert.equal((await api('GET', '/shop/payments', undefined, staff)).status, 200)
+      assert.equal((await api('GET', '/shop/summary', undefined, staff)).status, 200)
+
+      // Everything that moves money or changes the shop is owner-only, enforced by the server.
+      const forbidden: [string, string, unknown?][] = [
+        ['PATCH', '/shop', { ownerWallet: customer.address }],
+        ['POST', '/shop', { name: 'Hijack' }],
+        ['GET', '/shop/till'],
+        ['POST', '/shop/sweeps', { amount: '1' }],
+        ['GET', '/shop/sweeps'],
+        ['POST', `/shop/payments/${sale.body.id}/refunds`, {}],
+        ['GET', '/shop/refunds'],
+        ['POST', '/shop/chat', { messages: [{ role: 'user', content: 'hi' }] }],
+        ['POST', '/shop/paypal/connect'],
+        ['POST', '/shop/staff/invites', { label: 'x' }],
+        ['GET', '/shop/staff'],
+      ]
+      for (const [method, path, payload] of forbidden) {
+        const r = await api(method, path, payload, staff)
+        assert.equal(r.status, 403, `${method} ${path} should be owner-only, got ${r.status}`)
+      }
+
+      // The owner sees the device and can sign it out at once.
+      const list = await api('GET', '/shop/staff', undefined, tillToken)
+      assert.equal(list.body.length, 1)
+      assert.equal(list.body[0].label, 'Saturday till')
+      assert.equal((await api('POST', `/shop/staff/${list.body[0].id}/remove`, undefined, tillToken)).status, 200)
+      assert.equal((await api('GET', '/shop', undefined, staff)).status, 401)
+      // Another shop's owner can't remove this shop's staff.
+      const invite2 = await api('POST', '/shop/staff/invites', { label: 'Till 2' }, tillToken)
+      await api('POST', '/auth/staff', { code: invite2.body.code })
+      const id2 = (await api('GET', '/shop/staff', undefined, tillToken)).body[0].id
+      const otherOwner = await signIn(owner)
+      await api('POST', '/shop', { name: 'Someone else' }, otherOwner)
+      assert.equal((await api('POST', `/shop/staff/${id2}/remove`, undefined, otherOwner)).status, 404)
+      await api('POST', `/shop/staff/${id2}/remove`, undefined, tillToken)
+    })
+
     await step('points are never issued twice', async () => {
       const { issuePointsForPayment } = await import('../../src/services/payments')
       const again = await issuePointsForPayment(firstPaymentId)
