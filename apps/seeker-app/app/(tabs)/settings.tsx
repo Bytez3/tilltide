@@ -1,7 +1,7 @@
+import { Ionicons } from '@expo/vector-icons'
 import { isAddress } from '@solana/kit'
 import { useEffect, useState } from 'react'
 import { Linking, ScrollView, Text, View } from 'react-native'
-import { SetupCard } from '@/components/setup-card'
 import { MenuEditor } from '@/components/menu-editor'
 import { Button, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
@@ -9,6 +9,8 @@ import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api } from '@/lib/api'
 import { AppConfig } from '@/constants/app-config'
 import { currencySymbol, shortAddress } from '@/lib/format'
+
+type IconName = keyof typeof Ionicons.glyphMap
 
 export default function SettingsScreen() {
   const { merchant, update, signOut, replace, isStaff } = useMerchant()
@@ -46,6 +48,13 @@ export default function SettingsScreen() {
     setMaxPercent(String(merchant.redeemMaxPercent))
   }, [merchant])
 
+  // "Saved" is a confirmation, not a state: let it go after a moment. Errors stay until the next save.
+  useEffect(() => {
+    if (message !== 'Saved') return
+    const timer = setTimeout(() => setMessage(null), 2500)
+    return () => clearTimeout(timer)
+  }, [message])
+
   async function save() {
     setSaving(true)
     setMessage(null)
@@ -56,7 +65,8 @@ export default function SettingsScreen() {
       }
       const percent = Number(maxPercent)
       if (!/^\d+(\.\d{1,6})?$/.test(pointValue.trim())) throw new Error('Point value must be a number like 0.01')
-      if (!Number.isInteger(percent) || percent < 0 || percent > 90) throw new Error('Points can cover 0 to 90% of a bill')
+      if (!Number.isInteger(percent) || percent < 0 || percent > 90)
+        throw new Error('Points can cover 0 to 90% of a bill')
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closeTime.trim())) throw new Error('Closing time must look like 17:30')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
@@ -124,7 +134,11 @@ export default function SettingsScreen() {
   }
 
   useEffect(() => {
-    if (merchant && !isStaff) api.listStaff().then(setStaffList).catch(() => {})
+    if (merchant && !isStaff)
+      api
+        .listStaff()
+        .then(setStaffList)
+        .catch(() => {})
   }, [merchant, isStaff])
 
   async function addStaff() {
@@ -155,123 +169,355 @@ export default function SettingsScreen() {
     setPoints(result.configured ? `${result.points} points` : 'Points are not set up on the server yet')
   }
 
+  if (!merchant) return null
+
+  if (isStaff) {
+    return (
+      <ScrollView style={ui.screen} contentContainerStyle={ui.content}>
+        <ShopCard name={merchant.name} detail={`Staff till${merchant.staffLabel ? `: ${merchant.staffLabel}` : ''}`} />
+        <Text style={ui.muted}>This phone takes payments. The owner manages money, refunds and settings.</Text>
+        <Button title="Sign out" variant="secondary" onPress={signOut} />
+      </ScrollView>
+    )
+  }
+
+  // Unsaved edits to the shop settings, so "Save changes" only shows when there's something to save.
+  const dirty =
+    rate !== String(merchant.pointsPerUnit) ||
+    owner !== (merchant.ownerWallet ?? '') ||
+    token !== merchant.token ||
+    currency !== merchant.currency ||
+    closeTime !== merchant.closeTime ||
+    seekerBonus !== merchant.seekerBonus ||
+    pointValue !== merchant.pointValue ||
+    maxPercent !== String(merchant.redeemMaxPercent)
+  const paypalConnected = merchant.paypal.status === 'connected'
+  const sym = currencySymbol(currency)
+
   return (
-    <ScrollView style={ui.screen} contentContainerStyle={ui.content}>
-      {merchant && isStaff ? (
-        <View style={ui.card}>
-          <Text style={ui.h2}>{merchant.name}</Text>
-          <Text style={ui.muted}>Staff till{merchant.staffLabel ? `: ${merchant.staffLabel}` : ''}. Takes payments; the owner manages money and settings.</Text>
-        </View>
-      ) : merchant ? (
-        <View style={ui.card}>
-          <Text style={ui.h2}>{merchant.name}</Text>
-          <Text style={ui.muted}>
-            Till wallet {shortAddress(merchant.wallet)} · {merchant.token} · {merchant.cluster}
-          </Text>
+    <View style={ui.screen}>
+      <ScrollView
+        contentContainerStyle={[ui.content, { paddingBottom: dirty ? 110 : 24 }]}
+        keyboardShouldPersistTaps="handled"
+      >
+        <ShopCard
+          name={merchant.name}
+          detail={`Till wallet ${shortAddress(merchant.wallet)} · ${merchant.cluster}`}
+          pills={[
+            merchant.paypalEnabled ? (paypalConnected ? 'PayPal connected' : 'PayPal not connected') : null,
+            `Prices in ${merchant.currency}`,
+            `Wallet sales in ${merchant.token}`,
+          ]}
+        />
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Prices in</Text>
-          <Segmented options={(['GBP', 'EUR', 'USD'])} value={currency} onChange={setCurrency} />
+        <Section icon="card-outline" title="Payments">
+          {merchant.paypalEnabled && (
+            <View style={{ gap: 6 }}>
+              <View style={[ui.row, { justifyContent: 'space-between' }]}>
+                <Text style={FIELD_LABEL}>PayPal</Text>
+                {paypalConnected && (
+                  <Text style={{ color: colors.paid, fontFamily: fonts.bold, fontSize: 14 }}>Connected ✓</Text>
+                )}
+              </View>
+              <Text style={ui.muted}>
+                {paypalConnected
+                  ? `PayPal and card sales go straight to your PayPal account. Tilltide's fee: ${merchant.paypal.feePercent}%, taken by PayPal.`
+                  : `Connect your PayPal so PayPal and card payments go straight to your account.${merchant.paypal.required ? ' PayPal sales are off until you do.' : ''}`}
+              </Text>
+              {merchant.paypal.onboardingAvailable && !paypalConnected && (
+                <View style={ui.row}>
+                  <Button title="Connect PayPal" onPress={connectPayPal} loading={paypalBusy} style={{ flex: 2 }} />
+                  {merchant.paypal.status === 'pending' && (
+                    <Button title="Check PayPal" variant="secondary" onPress={checkPayPal} style={{ flex: 1 }} />
+                  )}
+                </View>
+              )}
+              {!merchant.paypal.onboardingAvailable && (
+                <>
+                  <Input
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    placeholder="you@yourshop.co.uk"
+                    value={paypalEmail}
+                    onChangeText={setPaypalEmail}
+                  />
+                  <Button title="Save PayPal email" variant="secondary" onPress={savePaypalEmail} />
+                </>
+              )}
+              {paypalMessage && <Text style={ui.muted}>{paypalMessage}</Text>}
+            </View>
+          )}
+          <Field label="Prices in">
+            <Segmented options={['GBP', 'EUR', 'USD']} value={currency} onChange={setCurrency} />
+          </Field>
+          <Field
+            label="Wallet payments in"
+            hint="The stablecoin wallet customers pay with, priced from your currency at the day's rate."
+          >
+            <Segmented options={['USDC', 'PYUSD']} value={token} onChange={setToken} />
+          </Field>
+        </Section>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Wallet payments in</Text>
-          <Segmented options={(['USDC', 'PYUSD'])} value={token} onChange={setToken} />
+        <Section
+          icon="grid-outline"
+          title="Menu"
+          description="Items the till can tap into a sale. Prices are checked by the server, so a till can't change them."
+        >
+          <MenuEditor />
+        </Section>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Points per {currencySymbol(currency)}1 spent</Text>
-          <Input keyboardType="decimal-pad" value={rate} onChangeText={setRate} />
+        <Section
+          icon="heart-outline"
+          title="Loyalty"
+          description="Every customer earns points automatically and spends them at the till."
+        >
+          <View style={[ui.row, { alignItems: 'flex-start' }]}>
+            <Field label={`Points per ${sym}1`} style={{ flex: 1 }}>
+              <Input keyboardType="decimal-pad" value={rate} onChangeText={setRate} style={{ minWidth: 0 }} />
+            </Field>
+            <Field label={`1 point is worth`} style={{ flex: 1 }}>
+              <Input
+                keyboardType="decimal-pad"
+                value={pointValue}
+                onChangeText={setPointValue}
+                style={{ minWidth: 0 }}
+              />
+            </Field>
+          </View>
+          <Field label="Points can pay up to" hint="Percent of a bill.">
+            <Input keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
+          </Field>
+          <Field label="Seeker owners earn" hint="Extra points for customers paying from a Solana Seeker phone.">
+            <Segmented
+              options={[1, 1.5, 2, 3]}
+              value={seekerBonus}
+              onChange={setSeekerBonus}
+              label={(m) => (m === 1 ? 'Off' : `×${m}`)}
+            />
+          </Field>
+        </Section>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>When spent, each point is worth ({currencySymbol(currency)})</Text>
-          <Input keyboardType="decimal-pad" value={pointValue} onChangeText={setPointValue} />
-          <Text style={[ui.body, { marginTop: 8 }]}>Points can pay up to (% of a bill)</Text>
-          <Input keyboardType="number-pad" value={maxPercent} onChangeText={setMaxPercent} />
+        <Section icon="wallet-outline" title="Takings and reports">
+          <Field
+            label="Owner wallet"
+            hint="Where wallet takings go when you send them from the till. You approve every transfer."
+          >
+            <Input
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="Solana address"
+              value={owner}
+              onChangeText={setOwner}
+            />
+          </Field>
+          <Field label="Closing time" hint="Your end-of-day report is written at this time.">
+            <Input value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />
+          </Field>
+        </Section>
 
-          <Text style={[ui.body, { marginTop: 8 }]}>Seeker owners earn</Text>
-          <Segmented options={[1, 1.5, 2, 3]} value={seekerBonus} onChange={setSeekerBonus} label={(m) => (m === 1 ? 'Off' : `×${m}`)} />
-          <Text style={ui.muted}>Extra points for customers paying from a Solana Seeker phone (Seeker Genesis Token or SKR).</Text>
-
-          <Text style={[ui.body, { marginTop: 8 }]}>Closing time (end-of-day report)</Text>
-          <Input value={closeTime} onChangeText={setCloseTime} placeholder="17:30" maxLength={5} />
-
-          <Text style={[ui.body, { marginTop: 8 }]}>Owner wallet (where sweeps go)</Text>
-          <Input autoCapitalize="none" autoCorrect={false} placeholder="Solana address" value={owner} onChangeText={setOwner} />
-
-          <Button title="Save" onPress={save} loading={saving} />
-          {message && <Text style={ui.muted}>{message}</Text>}
-        </View>
-      ) : (
-        <SetupCard />
-      )}
-
-      {merchant && !isStaff && <MenuEditor />}
-
-      {merchant && !isStaff && (
-        <View style={ui.card}>
-          <Text style={ui.h2}>Staff devices</Text>
-          <Text style={ui.muted}>Let staff take payments on their own phone. They can&apos;t move money, refund or change settings.</Text>
+        <Section
+          icon="people-outline"
+          title="Staff devices"
+          description="Staff take payments on their own phone. They can't move money, refund or change settings."
+        >
           {staffList.map((d) => (
-            <View key={d.id} style={[ui.row, { justifyContent: 'space-between' }]}>
-              <Text style={ui.body}>{d.label}</Text>
-              <Text style={{ color: colors.danger, fontFamily: fonts.semibold }} onPress={() => removeStaff(d.id)}>
+            <View
+              key={d.id}
+              style={[
+                ui.row,
+                { justifyContent: 'space-between', paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.line },
+              ]}
+            >
+              <View style={[ui.row, { gap: 10 }]}>
+                <Ionicons name="phone-portrait-outline" size={18} color={colors.muted} />
+                <Text style={ui.body}>{d.label}</Text>
+              </View>
+              <Text
+                style={{ color: colors.danger, fontFamily: fonts.semibold }}
+                accessibilityRole="button"
+                onPress={() => removeStaff(d.id)}
+              >
                 Remove
               </Text>
             </View>
           ))}
-          <Input placeholder="Name, e.g. Saturday till" value={staffLabel} onChangeText={setStaffLabel} maxLength={40} />
+          <Input
+            placeholder="Name, e.g. Saturday till"
+            value={staffLabel}
+            onChangeText={setStaffLabel}
+            maxLength={40}
+          />
           <Button title="Add staff device" variant="secondary" onPress={addStaff} />
           {staffCode && (
-            <View style={{ backgroundColor: colors.bg, borderRadius: 10, padding: 12, alignItems: 'center', gap: 4 }}>
-              <Text style={ui.muted}>Pairing code</Text>
-              <Text style={[ui.h1, { color: colors.sea, letterSpacing: 2 }]} selectable>
+            <View style={{ backgroundColor: colors.bg, borderRadius: 12, padding: 14, alignItems: 'center', gap: 4 }}>
+              <Text style={ui.label}>Pairing code</Text>
+              <Text style={[ui.money, { fontSize: 32, color: colors.sea, letterSpacing: 2 }]} selectable>
                 {staffCode}
               </Text>
-              <Text style={ui.muted}>Enter it on the staff phone. Works once, for {staffMinutes} minutes.</Text>
+              <Text style={[ui.muted, { textAlign: 'center' }]}>
+                Enter it on the staff phone. Works once, for {staffMinutes} minutes.
+              </Text>
             </View>
           )}
           {staffMessage && <Text style={ui.muted}>{staffMessage}</Text>}
-        </View>
-      )}
+        </Section>
 
-      {merchant && !isStaff && merchant.paypalEnabled && (
-        <View style={ui.card}>
-          <Text style={ui.h2}>PayPal</Text>
-          {merchant.paypal.status === 'connected' ? (
-            <>
-              <Text style={{ color: colors.paid, fontFamily: fonts.bold, fontSize: 15 }}>Connected ✓</Text>
-              <Text style={ui.muted}>PayPal sales go straight to your PayPal account.</Text>
-            </>
-          ) : (
-            <Text style={ui.muted}>
-              Connect your PayPal so PayPal and card payments go straight to your account.
-              {merchant.paypal.required ? ' PayPal sales are off until you do.' : ''}
+        <Section
+          icon="search-outline"
+          title="Customer points"
+          description="Look up the points balance for a customer's wallet."
+        >
+          <Input
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Customer wallet address"
+            value={lookup}
+            onChangeText={setLookup}
+          />
+          <Button title="Check balance" variant="secondary" onPress={checkPoints} disabled={!lookup.trim()} />
+          {points && <Text style={[ui.h2, { color: colors.sea }]}>{points}</Text>}
+        </Section>
+
+        <Button title="Sign out" variant="secondary" onPress={signOut} />
+      </ScrollView>
+
+      {(dirty || message) && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 12,
+            right: 12,
+            bottom: 12,
+            backgroundColor: colors.card,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.line,
+            padding: 10,
+            gap: 6,
+            shadowColor: '#000',
+            shadowOpacity: 0.12,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 6,
+          }}
+        >
+          {message && (
+            <Text style={[ui.muted, { textAlign: 'center', color: message === 'Saved' ? colors.paid : colors.danger }]}>
+              {message}
             </Text>
           )}
-          {merchant.paypal.onboardingAvailable && merchant.paypal.status !== 'connected' && (
-            <View style={ui.row}>
-              <Button title="Connect PayPal" onPress={connectPayPal} loading={paypalBusy} style={{ flex: 2 }} />
-              {merchant.paypal.status === 'pending' && <Button title="Check PayPal" variant="secondary" onPress={checkPayPal} style={{ flex: 1 }} />}
-            </View>
-          )}
-          {merchant.paypal.onboardingAvailable && (
-            <Text style={ui.muted}>Tilltide fee on PayPal sales: {merchant.paypal.feePercent}%, taken by PayPal.</Text>
-          )}
-          {!merchant.paypal.onboardingAvailable && (
-            <>
-              <Text style={ui.body}>PayPal email to be paid to</Text>
-              <Input autoCapitalize="none" keyboardType="email-address" value={paypalEmail} onChangeText={setPaypalEmail} />
-              <Button title="Save PayPal email" variant="secondary" onPress={savePaypalEmail} />
-            </>
-          )}
-          {paypalMessage && <Text style={ui.muted}>{paypalMessage}</Text>}
+          {dirty && <Button title="Save changes" onPress={save} loading={saving} />}
         </View>
       )}
+    </View>
+  )
+}
 
-      <View style={ui.card}>
-        <Text style={ui.h2}>Customer points</Text>
-        <Text style={ui.muted}>Look up the points balance for any customer wallet.</Text>
-        <Input autoCapitalize="none" autoCorrect={false} placeholder="Customer wallet address" value={lookup} onChangeText={setLookup} />
-        <Button title="Check balance" variant="secondary" onPress={checkPoints} disabled={!lookup.trim()} />
-        {points && <Text style={[ui.h2, { color: colors.sea }]}>{points}</Text>}
+const FIELD_LABEL = { fontFamily: fonts.semibold, fontSize: 15, color: colors.ink }
+
+/** A titled group of settings, with an icon. */
+function Section({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: IconName
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <View style={{ gap: 8, marginTop: 8 }}>
+      <View style={[ui.row, { gap: 10 }]}>
+        <View
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            backgroundColor: colors.card,
+            borderWidth: 1,
+            borderColor: colors.line,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name={icon} size={16} color={colors.sea} />
+        </View>
+        <Text style={ui.h2}>{title}</Text>
       </View>
+      {description && <Text style={ui.muted}>{description}</Text>}
+      <View style={[ui.card, { gap: 14, borderRadius: 18 }]}>{children}</View>
+    </View>
+  )
+}
 
-      {merchant && <Button title="Sign out" variant="secondary" onPress={signOut} />}
-    </ScrollView>
+/** One labelled setting, with an optional hint underneath the label. */
+function Field({
+  label,
+  hint,
+  children,
+  style,
+}: {
+  label: string
+  hint?: string
+  children: React.ReactNode
+  style?: object
+}) {
+  return (
+    <View style={[{ gap: 6 }, style]}>
+      <Text style={FIELD_LABEL}>{label}</Text>
+      {hint && <Text style={ui.muted}>{hint}</Text>}
+      {children}
+    </View>
+  )
+}
+
+/** The shop at the top of Settings, on the Harbour band. */
+function ShopCard({ name, detail, pills = [] }: { name: string; detail: string; pills?: (string | null)[] }) {
+  return (
+    <View style={{ backgroundColor: colors.band, borderRadius: 22, padding: 18, gap: 6 }}>
+      <View style={[ui.row, { gap: 12 }]}>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 14,
+            backgroundColor: colors.bandChip,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Ionicons name="storefront-outline" size={22} color={colors.bandInk} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[ui.h1, { fontSize: 22, color: colors.bandInk }]} numberOfLines={1}>
+            {name}
+          </Text>
+          <Text style={[ui.muted, { color: colors.bandMuted }]}>{detail}</Text>
+        </View>
+      </View>
+      {pills.some(Boolean) && (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+          {pills.filter(Boolean).map((p) => (
+            <Text
+              key={p}
+              style={{
+                backgroundColor: colors.bandChip,
+                color: colors.bandInk,
+                fontFamily: fonts.semibold,
+                fontSize: 12,
+                paddingHorizontal: 10,
+                paddingVertical: 4,
+                borderRadius: 99,
+                overflow: 'hidden',
+              }}
+            >
+              {p}
+            </Text>
+          ))}
+        </View>
+      )}
+    </View>
   )
 }

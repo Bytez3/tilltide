@@ -22,8 +22,11 @@ await tap('Connect PayPal')
 await page.getByText('Connected ✓', { exact: false }).waitFor()
 await tap('×2')
 await page.locator('input[value="0.01"]').fill('0.10')
-await tap('Save')
+await tap('Save changes')
 await page.getByText('Saved', { exact: true }).waitFor()
+await page.waitForTimeout(2700) // the confirmation fades
+await page.mouse.move(200, 400)
+await page.mouse.wheel(0, -10000)
 await shot('07-settings-paypal-connected')
 
 // The shop's menu: items the till taps into a sale.

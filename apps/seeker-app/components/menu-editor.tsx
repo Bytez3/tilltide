@@ -47,9 +47,7 @@ export function MenuEditor() {
   }
 
   return (
-    <View style={ui.card}>
-      <Text style={ui.h2}>Menu</Text>
-      <Text style={ui.muted}>Items the till can tap into a sale. Prices are checked by the server, so a till can&apos;t change them.</Text>
+    <View style={{ gap: 8 }}>
       {(items.data ?? []).map((item) =>
         editing === item.id ? (
           <ItemEditor key={item.id} item={item} symbol={symbol} onDone={() => (setEditing(null), refresh())} />
@@ -59,7 +57,10 @@ export function MenuEditor() {
             accessibilityRole="button"
             accessibilityHint="Edit this item"
             onPress={() => setEditing(item.id)}
-            style={[ui.row, { justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.line }]}
+            style={[
+              ui.row,
+              { justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.line },
+            ]}
           >
             <View style={[ui.row, { gap: 10, flexShrink: 1 }]}>
               <ItemIcon icon={item.icon} size={30} />
@@ -79,8 +80,22 @@ export function MenuEditor() {
         <Pressable accessibilityRole="button" accessibilityLabel="Choose an icon" onPress={() => setPicking((v) => !v)}>
           <ItemIcon icon={icon ?? guessIcon(name)} size={42} />
         </Pressable>
-        <Input placeholder="Item, e.g. Pasty" value={name} onChangeText={setName} maxLength={40} style={{ flex: 2, minWidth: 0 }} />
-        <Input placeholder={`${symbol}0.00`} value={price} onChangeText={setPrice} keyboardType="decimal-pad" maxLength={9} style={{ flex: 1, minWidth: 0 }} onSubmitEditing={add} />
+        <Input
+          placeholder="Item, e.g. Pasty"
+          value={name}
+          onChangeText={setName}
+          maxLength={40}
+          style={{ flex: 2, minWidth: 0 }}
+        />
+        <Input
+          placeholder={`${symbol}0.00`}
+          value={price}
+          onChangeText={setPrice}
+          keyboardType="decimal-pad"
+          maxLength={9}
+          style={{ flex: 1, minWidth: 0 }}
+          onSubmitEditing={add}
+        />
       </View>
       {picking && <IconPicker value={icon ?? guessIcon(name)} onPick={(i) => (setIcon(i), setPicking(false))} />}
       <Button title="Add to menu" variant="secondary" onPress={add} loading={busy} />
@@ -122,12 +137,31 @@ function ItemEditor({ item, symbol, onDone }: { item: Item; symbol: string; onDo
         <Pressable accessibilityRole="button" accessibilityLabel="Choose an icon" onPress={() => setPicking((v) => !v)}>
           <ItemIcon icon={icon} size={42} />
         </Pressable>
-        <Input value={name} onChangeText={setName} maxLength={40} style={{ flex: 2, minWidth: 0 }} accessibilityLabel="Item name" />
-        <Input value={price} onChangeText={setPrice} keyboardType="decimal-pad" maxLength={9} style={{ flex: 1, minWidth: 0 }} accessibilityLabel={`Price in ${symbol}`} />
+        <Input
+          value={name}
+          onChangeText={setName}
+          maxLength={40}
+          style={{ flex: 2, minWidth: 0 }}
+          accessibilityLabel="Item name"
+        />
+        <Input
+          value={price}
+          onChangeText={setPrice}
+          keyboardType="decimal-pad"
+          maxLength={9}
+          style={{ flex: 1, minWidth: 0 }}
+          accessibilityLabel={`Price in ${symbol}`}
+        />
       </View>
       {picking && <IconPicker value={icon} onPick={(i) => (setIcon(i), setPicking(false))} />}
       <View style={ui.row}>
-        <Button title="Remove" variant="secondary" onPress={() => run(() => api.deleteItem(item.id))} disabled={busy} style={{ flex: 1 }} />
+        <Button
+          title="Remove"
+          variant="secondary"
+          onPress={() => run(() => api.deleteItem(item.id))}
+          disabled={busy}
+          style={{ flex: 1 }}
+        />
         <Button title="Cancel" variant="secondary" onPress={onDone} disabled={busy} style={{ flex: 1 }} />
         <Button title="Save" onPress={save} loading={busy} style={{ flex: 1 }} />
       </View>
@@ -147,7 +181,12 @@ function IconPicker({ value, onPick }: { value: string; onPick: (icon: string) =
           accessibilityLabel={meta.label}
           accessibilityState={{ selected: key === value }}
           onPress={() => onPick(key)}
-          style={{ borderRadius: 14, padding: 2, borderWidth: 2, borderColor: key === value ? colors.sea : 'transparent' }}
+          style={{
+            borderRadius: 14,
+            padding: 2,
+            borderWidth: 2,
+            borderColor: key === value ? colors.sea : 'transparent',
+          }}
         >
           <ItemIcon icon={key} size={38} />
         </Pressable>
