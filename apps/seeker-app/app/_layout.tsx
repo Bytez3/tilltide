@@ -2,10 +2,12 @@ import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import 'react-native-reanimated'
 import { AppProviders } from '@/components/app-providers'
+import { OfflineBanner } from '@/components/offline-banner'
 
 export default function RootLayout() {
   return (
     <AppProviders>
+      <OfflineBanner />
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       </Stack>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
 import * as Haptics from 'expo-haptics'
+import { GettingStarted } from '@/components/getting-started'
 import { SetupCard } from '@/components/setup-card'
 import { Button } from '@/components/ui'
 import { colors, ui } from '@/constants/theme'
@@ -203,7 +204,8 @@ export default function ChargeScreen() {
   const currency = merchant.currency
   const paypalNotConnected = activeRail === 'paypal' && merchant.paypal.required && merchant.paypal.status !== 'connected' && !merchant.paypal.email
   return (
-    <View style={[ui.screen, ui.content]}>
+    <ScrollView style={ui.screen} contentContainerStyle={ui.content} keyboardShouldPersistTaps="handled">
+      <GettingStarted />
       <View style={[ui.row, { justifyContent: 'space-between' }]}>
         <Text style={ui.muted}>{merchant.name}</Text>
         {merchant.paypalEnabled && (
@@ -282,6 +284,6 @@ export default function ChargeScreen() {
       </View>
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
       <Button title={valid ? `Charge ${currencySymbol(currency)}${amount}` : 'Enter an amount'} onPress={charge} disabled={!valid || paypalNotConnected} loading={creating} />
-    </View>
+    </ScrollView>
   )
 }

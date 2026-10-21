@@ -1,4 +1,5 @@
 import { AppConfig } from '@/constants/app-config'
+import { reportReachable } from '@/lib/connectivity'
 
 export interface Merchant {
   id: string
@@ -139,8 +140,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       },
     })
   } catch {
+    reportReachable(false)
     throw new ApiError("Can't reach the Tilltide server. Check your connection.", 0)
   }
+  reportReachable(true)
   const body = await res.json().catch(() => ({}))
   if (res.status === 401 && path.startsWith('/shop')) onSignedOut?.()
   if (!res.ok) throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
