@@ -51,7 +51,19 @@ export function Button({
 }
 
 /** A small rounded toggle or action, for optional extras under the main control. */
-export function Chip({ label, onPress, selected }: { label: string; onPress: () => void; selected?: boolean }) {
+export function Chip({
+  label,
+  onPress,
+  selected,
+  tone = 'plain',
+}: {
+  label: string
+  onPress: () => void
+  selected?: boolean
+  /** 'band': on the teal Harbour header. Selected chips there are white. */
+  tone?: 'plain' | 'band'
+}) {
+  const onBand = tone === 'band'
   return (
     <Pressable
       accessibilityRole="button"
@@ -60,14 +72,14 @@ export function Chip({ label, onPress, selected }: { label: string; onPress: () 
       style={({ pressed }) => ({
         borderRadius: 999,
         borderWidth: 1,
-        borderColor: selected ? colors.sea : colors.line,
-        backgroundColor: selected ? colors.sea : colors.card,
+        borderColor: onBand ? 'transparent' : selected ? colors.sea : colors.line,
+        backgroundColor: onBand ? (selected ? '#FFFFFF' : colors.bandChip) : selected ? colors.sea : colors.card,
         paddingHorizontal: 14,
         paddingVertical: 7,
         opacity: pressed ? 0.8 : 1,
       })}
     >
-      <Text style={{ color: selected ? colors.seaInk : colors.sea, fontFamily: fonts.semibold, fontSize: 14 }}>{label}</Text>
+      <Text style={{ color: onBand ? (selected ? colors.band : colors.bandInk) : selected ? colors.seaInk : colors.sea, fontFamily: fonts.semibold, fontSize: 14 }}>{label}</Text>
     </Pressable>
   )
 }
@@ -79,18 +91,22 @@ export function Segmented<T extends string | number>({
   onChange,
   label = (o) => String(o),
   stretch = true,
+  tone = 'plain',
 }: {
   options: readonly T[]
   value: T
   onChange: (value: T) => void
   label?: (option: T) => string
   stretch?: boolean
+  /** 'band': on the teal Harbour header. */
+  tone?: 'plain' | 'band'
 }) {
+  const onBand = tone === 'band'
   return (
     <View
       style={{
         flexDirection: 'row',
-        backgroundColor: colors.line,
+        backgroundColor: onBand ? colors.bandChip : colors.line,
         borderRadius: 12,
         padding: 3,
         gap: 3,
@@ -111,7 +127,7 @@ export function Segmented<T extends string | number>({
               paddingVertical: 9,
               paddingHorizontal: 16,
               borderRadius: 9,
-              backgroundColor: selected ? colors.card : 'transparent',
+              backgroundColor: selected ? (onBand ? '#FFFFFF' : colors.card) : 'transparent',
               shadowColor: '#000',
               shadowOpacity: selected ? 0.08 : 0,
               shadowRadius: 3,
@@ -119,7 +135,7 @@ export function Segmented<T extends string | number>({
               elevation: selected ? 1 : 0,
             }}
           >
-            <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 15, color: selected ? colors.sea : colors.muted }}>
+            <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 15, color: selected ? (onBand ? colors.band : colors.sea) : onBand ? colors.bandMuted : colors.muted }}>
               {label(option)}
             </Text>
           </Pressable>

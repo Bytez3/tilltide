@@ -58,18 +58,21 @@ export async function renderReceipt(paymentId: string) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Receipt · ${payment.shopName}</title>
 <style>
-  :root { --bg:#F6F3EE; --card:#fff; --ink:#14211F; --muted:#5E6B68; --line:#E2DDD4; --sea:#0E6E6B; --sea-soft:#E3F0EE; --paid:#1F8A4C; --paid-soft:#E6F2EA; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#0F1716; --card:#172321; --ink:#EEF2F1; --muted:#9BA8A5; --line:#25332F; --sea:#3FB3AE; --sea-soft:#1B3331; --paid:#4CC27D; --paid-soft:#173426; } }
+  :root { --bg:#F6F3EE; --card:#fff; --ink:#14211F; --muted:#5E6B68; --line:#E2DDD4; --sea:#0E6E6B; --sea-soft:#E3F0EE; --paid:#1F8A4C; --paid-soft:#E6F2EA; --band:#0E6E6B; --band-ink:#fff; --band-muted:#BFE3DE; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0F1716; --card:#172321; --ink:#EEF2F1; --muted:#9BA8A5; --line:#25332F; --sea:#3FB3AE; --sea-soft:#1B3331; --paid:#4CC27D; --paid-soft:#173426; --band:#123F3C; --band-ink:#EEF2F1; --band-muted:#8FC9C2; } }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased; }
-  main { max-width:420px; margin:0 auto; padding:20px 16px 32px; }
+  .band { background:var(--band); color:var(--band-ink); border-radius:0 0 28px 28px; }
+  .band-in { max-width:420px; margin:0 auto; padding:20px 16px 28px; }
+  main { max-width:420px; margin:0 auto; padding:16px 16px 32px; }
   header { display:flex; align-items:center; gap:10px; margin:4px 0 16px; }
-  header img { width:32px; height:32px; border-radius:9px; }
+  header img { width:32px; height:32px; border-radius:9px; border:1.5px solid rgba(255,255,255,.55); }
   header .shop { font-weight:800; font-size:18px; letter-spacing:-0.2px; }
-  header .sub { color:var(--muted); font-size:13px; }
+  header .sub { color:var(--band-muted); font-size:13px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:20px; margin-bottom:12px; }
-  .hero { text-align:center; padding:28px 20px; }
-  .stamp { display:inline-flex; align-items:center; gap:6px; background:var(--paid-soft); color:var(--paid); font-weight:700; font-size:14px; padding:6px 12px; border-radius:999px; }
+  .hero { text-align:center; padding:12px 0 0; }
+  .for { color:var(--band-ink); margin-top:4px; }
+  .stamp { display:inline-flex; align-items:center; gap:6px; background:#fff; color:#1F8A4C; font-weight:700; font-size:14px; padding:6px 12px; border-radius:999px; }
   .amount { font-size:48px; font-weight:800; letter-spacing:-1.5px; margin:12px 0 2px; font-variant-numeric:tabular-nums; }
   .muted { color:var(--muted); font-size:14px; }
   .label { color:var(--muted); font-size:12px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
@@ -84,16 +87,19 @@ export async function renderReceipt(paymentId: string) {
   a { color:var(--sea); }
 </style>
 </head>
-<body><main>
+<body>
+<div class="band"><div class="band-in">
   <header>
     <img src="/favicon.png" alt="">
     <div><div class="shop">${payment.shopName}</div><div class="sub">Receipt · ${when}</div></div>
   </header>
-  <div class="card hero">
+  <div class="hero">
     <span class="stamp">✓ Paid${({ paypal: ' with PayPal', cash: ' in cash', card: ' by card' } as Record<string, string>)[payment.rail] ?? ` in ${payment.tokenSymbol}`}</span>
     <div class="amount">${symbol}${amount}</div>
-    ${payment.label ? html`<div class="muted">${payment.label}</div>` : ''}
+    ${payment.label ? html`<div class="for">${payment.label}</div>` : ''}
   </div>
+</div></div>
+<main>
   ${
     isSolana || payment.discount > 0n || refunded?.total || payment.signature
       ? html`<div class="card">

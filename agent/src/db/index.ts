@@ -136,6 +136,7 @@ export interface ItemRow {
   id: string
   merchantId: string
   name: string
+  icon: string
   price: bigint
   position: number
   archived: boolean

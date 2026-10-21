@@ -1102,10 +1102,13 @@ async function main() {
     })
 
     await step('quick-sale items: the owner keeps a menu; baskets are priced by the server, not the till', async () => {
-      const pasty = await api('POST', '/shop/items', { name: 'Pasty', price: '4.50' }, tillToken)
+      const pasty = await api('POST', '/shop/items', { name: 'Pasty', price: '4.50', icon: 'pastry' }, tillToken)
       assert.equal(pasty.status, 201, JSON.stringify(pasty.body))
+      assert.equal(pasty.body.icon, 'pastry')
+      assert.equal((await api('POST', '/shop/items', { name: 'Bad icon', price: '1.00', icon: 'rocket' }, tillToken)).status, 400)
       const coffee = await api('POST', '/shop/items', { name: 'Coffee', price: '3' }, tillToken)
       assert.equal(coffee.status, 201, JSON.stringify(coffee.body))
+      assert.equal(coffee.body.icon, 'other', 'items without an icon get the default')
       for (const bad of [{ name: 'Free', price: '0' }, { name: '  ', price: '1.00' }, { name: 'Odd', price: '1.005' }, { name: 'Neg', price: '-2' }]) {
         assert.equal((await api('POST', '/shop/items', bad, tillToken)).status, 400, JSON.stringify(bad))
       }

@@ -29,7 +29,7 @@ import { listReports, writeDailyReport } from './services/reports'
 import { createExportToken, exportCsv, redeemExportToken } from './services/export'
 import { beginSweep, getSweep, proposeSweep, serializeSweep, settleSweep, submitSweep, SweepError, tillBalance } from './services/sweeps'
 import { checkPayment } from './services/watcher'
-import { archiveItem, createItem, ItemError, listItems, priceBasket, updateItem } from './services/items'
+import { archiveItem, createItem, ITEM_ICONS, ItemError, listItems, priceBasket, updateItem } from './services/items'
 import { rpc } from './solana'
 
 const wallet = z.string().refine(isAddress, 'Not a Solana address')
@@ -396,7 +396,8 @@ shop.patch('/', async (c) => {
 
 // ---- Quick-sale items (the shop's menu). Staff can read it; only the owner changes it. ----------
 
-const serializeItem = (i: ItemRow) => ({ id: i.id, name: i.name, price: fromBaseUnits(i.price, LEDGER_DECIMALS), position: i.position })
+const serializeItem = (i: ItemRow) => ({ id: i.id, name: i.name, price: fromBaseUnits(i.price, LEDGER_DECIMALS), position: i.position, icon: i.icon })
+const itemIcon = z.enum(ITEM_ICONS)
 const itemPrice = z
   .string()
   .regex(/^\d{1,6}(\.\d{1,2})?$/, 'Price must be like 4.50')
@@ -415,8 +416,8 @@ shop.get('/items', async (c) => {
 
 shop.post('/items', async (c) => {
   const merchant = await myShop(c)
-  const input = await body(c, z.object({ name: itemName, price: itemPrice }))
-  const item = await createItem(merchant.id, input.name, input.price).catch(itemErrors)
+  const input = await body(c, z.object({ name: itemName, price: itemPrice, icon: itemIcon.optional() }))
+  const item = await createItem(merchant.id, input.name, input.price, input.icon).catch(itemErrors)
   return c.json(serializeItem(item), 201)
 })
 
@@ -424,7 +425,7 @@ shop.patch('/items/:id', async (c) => {
   const merchant = await myShop(c)
   const id = z.uuid().safeParse(c.req.param('id'))
   if (!id.success) throw new HTTPException(404, { message: 'Item not found' })
-  const input = await body(c, z.object({ name: itemName.optional(), price: itemPrice.optional(), position: z.number().int().min(0).max(1000).optional() }))
+  const input = await body(c, z.object({ name: itemName.optional(), price: itemPrice.optional(), position: z.number().int().min(0).max(1000).optional(), icon: itemIcon.optional() }))
   const item = await updateItem(merchant.id, id.data, input).catch(itemErrors)
   return c.json(serializeItem(item))
 })

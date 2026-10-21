@@ -233,3 +233,6 @@ alter table payments add constraint payments_rail_check check (rail in ('solana'
 alter table payments drop constraint if exists payments_status_check;
 alter table payments add constraint payments_status_check check (status in ('pending', 'paid', 'failed', 'expired', 'void'));
 alter table payments add column if not exists voided_at timestamptz;
+
+-- An icon for each menu item (a key from ITEM_ICONS in services/items.ts; the app maps it to a glyph and colour).
+alter table items add column if not exists icon text not null default 'other';

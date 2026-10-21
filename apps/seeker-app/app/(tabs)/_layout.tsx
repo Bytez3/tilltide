@@ -26,10 +26,13 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: colors.sea,
+        tabBarInactiveTintColor: colors.muted,
         // The default bar squeezes the label box below its line height, which clips descenders (g, y).
         // Signed out, the phone shows only the welcome screen: no tabs, no header.
         headerShown: !!merchant,
-        tabBarStyle: merchant ? { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom } : { display: 'none' },
+        tabBarStyle: merchant
+          ? { height: 64 + insets.bottom, paddingTop: 4, paddingBottom: 4 + insets.bottom, backgroundColor: colors.card, borderTopColor: colors.line }
+          : { display: 'none' },
         tabBarLabelStyle: { fontSize: 11, lineHeight: 14, fontFamily: fonts.medium },
         headerStyle: { backgroundColor: colors.bg },
         headerTitleAlign: 'left',
@@ -44,7 +47,21 @@ export default function TabsLayout() {
         sceneStyle: { backgroundColor: colors.bg },
       }}
     >
-      <Tabs.Screen name="index" options={tab('Charge', 'qr-code-outline')} />
+      {/* Harbour: the till's header is the top of the teal band that holds the total. */}
+      <Tabs.Screen
+        name="index"
+        options={{
+          ...tab('Charge', 'qr-code-outline'),
+          headerStyle: { backgroundColor: colors.band },
+          headerTitle: ({ children }) => <BrandTitle title={children} onBand />,
+          headerRight: () =>
+            merchant ? (
+              <Text numberOfLines={1} style={{ fontFamily: fonts.semibold, fontSize: 13, color: colors.bandMuted, marginRight: 16, maxWidth: 160 }}>
+                {merchant.name}
+              </Text>
+            ) : null,
+        }}
+      />
       <Tabs.Screen name="activity" options={tab('Activity', 'receipt-outline')} />
       <Tabs.Screen name="agent" options={{ ...tab('Assistant', 'sparkles-outline'), href: isStaff ? null : undefined }} />
       <Tabs.Screen name="settings" options={tab('Settings', 'settings-outline')} />

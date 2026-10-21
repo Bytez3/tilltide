@@ -7,7 +7,7 @@ import { colors } from '@/constants/theme'
 const NATIVE_DRIVER = Platform.OS !== 'web'
 
 /** The "Paid" moment: a green disc springs in and the tick pops in on top. */
-export function PaidTick({ size = 112 }: { size?: number }) {
+export function PaidTick({ size = 112, onBand = false }: { size?: number; onBand?: boolean }) {
   const disc = useRef(new Animated.Value(0)).current
   const tick = useRef(new Animated.Value(0)).current
 
@@ -26,14 +26,15 @@ export function PaidTick({ size = 112 }: { size?: number }) {
         width: size,
         height: size,
         borderRadius: size / 2,
-        backgroundColor: colors.paid,
+        // On the teal band the disc is white with a green tick; elsewhere green with a white tick.
+        backgroundColor: onBand ? '#FFFFFF' : colors.paid,
         alignItems: 'center',
         justifyContent: 'center',
         transform: [{ scale: disc }],
       }}
     >
       <Animated.View style={{ opacity: tick, transform: [{ scale: tick }] }}>
-        <Ionicons name="checkmark" size={size * 0.62} color="#FFFFFF" />
+        <Ionicons name="checkmark" size={size * 0.62} color={onBand ? colors.paid : '#FFFFFF'} />
       </Animated.View>
     </Animated.View>
   )

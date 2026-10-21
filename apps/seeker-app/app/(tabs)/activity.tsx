@@ -156,16 +156,17 @@ export default function ActivityScreen() {
           {sweep && <SweepCard sweep={sweep} onChange={(next) => (setSweep(next), refresh())} />}
           {refund && <RefundCard refund={refund} onChange={(next) => (setRefund(next), refresh())} />}
           {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
-          <View style={ui.card}>
-            <Text style={ui.muted}>Today</Text>
-            <Text style={[ui.h1, { fontSize: 40, letterSpacing: -0.5 }]}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
+          {/* Harbour: today's takings on the teal band. */}
+          <View style={[ui.card, { backgroundColor: colors.band, borderColor: colors.band, borderRadius: 22, padding: 20 }]}>
+            <Text style={[ui.label, { color: colors.bandMuted }]}>Today</Text>
+            <Text style={[ui.money, { fontSize: 44, color: colors.bandInk }]}>{s ? `${currencySymbol(s.token)}${Number(s.takings).toFixed(2)}` : '—'}</Text>
             {s && (
-              <Text style={ui.muted}>
+              <Text style={[ui.muted, { color: colors.bandMuted }]}>
                 {s.paidCount} sales · {s.uniqueCustomers} customers · {s.pointsIssued} points issued
               </Text>
             )}
             {s && s.refunds.count > 0 && (
-              <Text style={ui.muted}>
+              <Text style={[ui.muted, { color: colors.bandMuted }]}>
                 {s.refunds.count} refund{s.refunds.count === 1 ? '' : 's'} · net {currencySymbol(s.token)}
                 {Number(s.netTakings).toFixed(2)}
               </Text>
@@ -173,18 +174,19 @@ export default function ActivityScreen() {
             {s && Number(s.takings) > 0 && (
               <RailSplit
                 parts={[
-                  { label: 'PayPal', value: Number(s.byRail.paypal), colour: colors.sea },
-                  { label: 'Wallet', value: Number(s.byRail.solana), colour: colors.seaLight },
-                  { label: 'Cash', value: Number(s.byRail.cash ?? 0), colour: colors.sand },
-                  { label: 'Card', value: Number(s.byRail.card ?? 0), colour: colors.ink },
+                  { label: 'PayPal', value: Number(s.byRail.paypal), colour: '#FFFFFF' },
+                  { label: 'Wallet', value: Number(s.byRail.solana), colour: '#8FD9CF' },
+                  { label: 'Cash', value: Number(s.byRail.cash ?? 0), colour: '#F2C46D' },
+                  { label: 'Card', value: Number(s.byRail.card ?? 0), colour: '#F29E8E' },
                 ]}
                 symbol={currencySymbol(s.token)}
+                onBand
               />
             )}
             {!isStaff && sweepAmount === null && !sweep && <Button title="Send takings to owner" variant="secondary" onPress={startSweep} />}
             {sweepAmount !== null && (
               <View style={{ gap: 8 }}>
-                <Text style={ui.body}>Amount to move from the till ({merchant.token})</Text>
+                <Text style={[ui.body, { color: colors.bandInk }]}>Amount to move from the till ({merchant.token})</Text>
                 <Input keyboardType="decimal-pad" value={sweepAmount} onChangeText={setSweepAmount} />
                 <View style={ui.row}>
                   <Button title="Cancel" variant="secondary" onPress={() => setSweepAmount(null)} style={{ flex: 1 }} />
@@ -252,30 +254,38 @@ export default function ActivityScreen() {
 }
 
 /** Today's takings split by how customers paid, as a segmented bar with a legend. Empty methods are left out. */
-function RailSplit({ parts, symbol }: { parts: { label: string; value: number; colour: string }[]; symbol: string }) {
+function RailSplit({
+  parts,
+  symbol,
+  onBand = false,
+}: {
+  parts: { label: string; value: number; colour: string }[]
+  symbol: string
+  onBand?: boolean
+}) {
   const shown = parts.filter((p) => p.value > 0)
   if (shown.length === 0) return null
   return (
     <View style={{ gap: 6, marginTop: 4 }}>
-      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: colors.line, gap: 2 }}>
+      <View style={{ flexDirection: 'row', height: 8, borderRadius: 4, overflow: 'hidden', backgroundColor: onBand ? colors.bandChip : colors.line, gap: 2 }}>
         {shown.map((p) => (
           <View key={p.label} style={{ flex: p.value, backgroundColor: p.colour }} />
         ))}
       </View>
       <View style={[ui.row, { flexWrap: 'wrap', columnGap: 14, rowGap: 4 }]}>
         {shown.map((p) => (
-          <Legend key={p.label} colour={p.colour} label={`${p.label} ${symbol}${p.value.toFixed(2)}`} />
+          <Legend key={p.label} colour={p.colour} label={`${p.label} ${symbol}${p.value.toFixed(2)}`} onBand={onBand} />
         ))}
       </View>
     </View>
   )
 }
 
-function Legend({ colour, label }: { colour: string; label: string }) {
+function Legend({ colour, label, onBand = false }: { colour: string; label: string; onBand?: boolean }) {
   return (
     <View style={[ui.row, { gap: 6 }]}>
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colour }} />
-      <Text style={ui.muted}>{label}</Text>
+      <Text style={[ui.muted, onBand && { color: colors.bandInk }]}>{label}</Text>
     </View>
   )
 }

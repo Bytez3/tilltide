@@ -3,6 +3,13 @@ import { LEDGER_DECIMALS, sql, type ItemRow, type SaleItem } from '../db'
 
 export class ItemError extends Error {}
 
+/** Icons a menu item can have. The app draws each with its own glyph and colour. */
+export const ITEM_ICONS = [
+  'pastry', 'bread', 'cake', 'cupcake', 'cookie', 'icecream', 'coffee', 'tea', 'soda', 'water', 'beer', 'wine',
+  'pizza', 'burger', 'sandwich', 'noodles', 'fish', 'veg', 'fruit', 'flower', 'gift', 'clothing', 'book', 'other',
+] as const
+export type ItemIcon = (typeof ITEM_ICONS)[number]
+
 export const MAX_ITEMS = 60
 export const MAX_LINES = 30
 export const MAX_QTY = 99
@@ -12,7 +19,7 @@ export function listItems(merchantId: string) {
     select * from items where merchant_id = ${merchantId} and not archived order by position, created_at`
 }
 
-export async function createItem(merchantId: string, name: string, price: bigint) {
+export async function createItem(merchantId: string, name: string, price: bigint, icon: ItemIcon = 'other') {
   return sql.begin(async (tx) => {
     // Serialise adds per shop so the cap and the position can't race.
     await tx`select pg_advisory_xact_lock(hashtext(${`items:${merchantId}`}))`
@@ -22,17 +29,18 @@ export async function createItem(merchantId: string, name: string, price: bigint
     const { count, next } = stats!
     if (count >= MAX_ITEMS) throw new ItemError(`A shop can have up to ${MAX_ITEMS} items`)
     const [row] = await tx<ItemRow[]>`
-      insert into items (merchant_id, name, price, position) values (${merchantId}, ${name}, ${price.toString()}, ${next}) returning *`
+      insert into items (merchant_id, name, price, position, icon) values (${merchantId}, ${name}, ${price.toString()}, ${next}, ${icon}) returning *`
     return row!
   })
 }
 
-export async function updateItem(merchantId: string, id: string, changes: { name?: string; price?: bigint; position?: number }) {
+export async function updateItem(merchantId: string, id: string, changes: { name?: string; price?: bigint; position?: number; icon?: ItemIcon }) {
   const [row] = await sql<ItemRow[]>`
     update items set
       name = coalesce(${changes.name ?? null}, name),
       price = coalesce(${changes.price?.toString() ?? null}::bigint, price),
-      position = coalesce(${changes.position ?? null}::int, position)
+      position = coalesce(${changes.position ?? null}::int, position),
+      icon = coalesce(${changes.icon ?? null}, icon)
     where id = ${id} and merchant_id = ${merchantId} and not archived returning *`
   if (!row) throw new ItemError('Item not found')
   return row

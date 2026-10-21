@@ -69,6 +69,8 @@ export interface Payment {
 export interface Item {
   id: string
   name: string
+  /** Key into ITEM_ICONS (components/item-icon.tsx). */
+  icon: string
   price: string
   position: number
 }
@@ -195,8 +197,8 @@ export const api = {
     request<Payment & { url: string | null }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode, items: items?.length ? items : undefined })),
   voidSale: (id: string) => request<Payment>(`/shop/payments/${id}/void`, post()),
   listItems: () => request<Item[]>('/shop/items'),
-  createItem: (name: string, price: string) => request<Item>('/shop/items', post({ name, price })),
-  updateItem: (id: string, changes: { name?: string; price?: string; position?: number }) =>
+  createItem: (name: string, price: string, icon?: string) => request<Item>('/shop/items', post({ name, price, icon })),
+  updateItem: (id: string, changes: { name?: string; price?: string; position?: number; icon?: string }) =>
     request<Item>(`/shop/items/${id}`, { method: 'PATCH', body: JSON.stringify(changes) }),
   deleteItem: (id: string) => request<{ ok: true }>(`/shop/items/${id}`, { method: 'DELETE' }),
   connectPayPal: () => request<{ url: string }>('/shop/paypal/connect', post()),
