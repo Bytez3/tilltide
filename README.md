@@ -66,6 +66,21 @@ pnpm --filter @tilltide/seeker-app web:sandbox # the app on http://localhost:808
 
 The sandbox runs a local Solana validator with test USDC and PYUSD, a funded test customer, loyalty points, and a stand-in PayPal. In the browser, a local test wallet signs in place of the phone wallet (it refuses to run outside the sandbox). The QR screen gets "act as the customer" buttons, so you can click through a whole day: charge, pay, points, send takings to the owner with the fee, and PayPal refunds. Agent chat needs `ANTHROPIC_API_KEY` in `agent/.env.sandbox`.
 
+## Phones
+
+One codebase, every phone. The owner's keys always stay in their own wallet app.
+
+| Phone | App | How the owner's wallet connects | Ships through |
+| --- | --- | --- | --- |
+| Solana Seeker | Android app | Mobile Wallet Adapter (Seed Vault) | Solana dApp Store (`eas build -p android --profile seeker`, an APK) |
+| Any other Android phone | the same Android app | Mobile Wallet Adapter, with Phantom, Solflare or Backpack installed | Google Play (`eas build -p android --profile android`, an app bundle) |
+| iPhone | iOS app | Phantom's or Solflare's deeplinks: the app opens the wallet, which sends the owner back (`features/wallet/wallet.ios.tsx`) | App Store (`eas build -p ios --profile ios`) |
+| Anything with a browser | web app at https://tilltide.bytez3.com/app (can be added to the home screen) | a wallet extension or the wallet app's own browser on iPhone; Mobile Wallet Adapter in Android Chrome | nothing to install |
+
+Staff tills pair with a code and need no wallet, on any of these. Customers never install anything: they scan the QR with their camera, and pay through PayPal in the browser or with any Solana Pay wallet.
+
+Builds run on [EAS](https://expo.dev/eas) from `apps/seeker-app` (`eas.json` has the profiles; `test-android` and `test-ios` make installable test builds). The iOS build needs an Apple Developer account, Google Play a Play Console account, and the dApp Store a publisher wallet. For Android sign-in to verify the app, add each Android signing certificate's SHA-256 (EAS's upload key and Play's app signing key) to `ANDROID_CERT_SHA` on the API.
+
 ## Run it locally
 
 Needs Node 22, pnpm, Docker, Android Studio (emulator or a device), and an MWA wallet on the device (e.g. Phantom or Solflare, set to devnet).

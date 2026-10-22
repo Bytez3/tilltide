@@ -1,0 +1,55 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "base": {
+      "node": "22.20.0",
+      "pnpm": "11.18.0",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://tilltide.bytez3.com",
+        "EXPO_PUBLIC_APP_URI": "https://tilltide.bytez3.com"
+      }
+    },
+    "seeker": {
+      "extends": "base",
+      "distribution": "store",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "android": {
+      "extends": "base",
+      "distribution": "store",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "autoIncrement": true
+    },
+    "ios": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true
+    },
+    "test-android": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "test-ios": {
+      "extends": "base",
+      "distribution": "internal"
+    }
+  },
+  "submit": {
+    "android": {
+      "android": {
+        "track": "internal"
+      }
+    },
+    "ios": {}
+  }
+}

@@ -18,7 +18,8 @@ COPY packages/agent-pay-kit packages/agent-pay-kit
 COPY apps/seeker-app apps/seeker-app
 RUN cd apps/seeker-app && \
     EXPO_PUBLIC_SANDBOX=1 EXPO_PUBLIC_API_URL=$DEMO_URL EXPO_PUBLIC_SOLANA_RPC_URL=$DEMO_URL/sandbox/rpc EXPO_PUBLIC_APP_URI=$DEMO_URL \
-    npx expo export -p web --output-dir /web
+    npx expo export -p web --output-dir /web && \
+    sed -i 's#%BASE_URL%##g' /web/index.html
 
 FROM base
 # Agave 4 needs io_uring, which containers usually block; 3.0 runs anywhere.
