@@ -25,7 +25,7 @@ export interface RedemptionRule {
 
 /** How many points a customer can spend on a bill, and the discount that buys. Rounds down. */
 export function planRedemption(price: bigint, pointsBalance: bigint, rule: RedemptionRule) {
-  if (rule.pointValue <= 0n || pointsBalance <= 0n) return { points: 0n, discount: 0n, toPay: price }
+  if (rule.pointValue <= 0n || pointsBalance <= 0n || !Number.isFinite(rule.maxPercent)) return { points: 0n, discount: 0n, toPay: price }
   const cap = (price * BigInt(Math.max(0, Math.min(100, Math.floor(rule.maxPercent))))) / 100n
   const points = [pointsBalance, cap / rule.pointValue].reduce((a, b) => (a < b ? a : b))
   const discount = points * rule.pointValue

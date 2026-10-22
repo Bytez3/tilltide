@@ -40,3 +40,7 @@ The package ships ESM, CommonJS and TypeScript types. Build it with `pnpm build`
 ## Licence
 
 MIT
+
+## Publishing
+
+Publish with **pnpm** (`pnpm publish`). It swaps in the `dist` entry points from `publishConfig`; plain `npm publish` would ship the TypeScript source paths and a broken package.

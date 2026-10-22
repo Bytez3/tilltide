@@ -98,3 +98,26 @@ describe('points redemption', () => {
     expect(() => encodeTransactionRequest('ftp://nope')).toThrow()
   })
 })
+
+describe('edge cases', () => {
+  const recipient = 'Fv9JRvR7XK6U6Q7sLWS8a1ZMDvMHm8Lp7dDb5qfZ8jZD'
+  it('parses values that contain ? and + correctly', () => {
+    const parsed = parseTransferRequest(`solana:${recipient}?amount=1.5&message=Thanks%3F%20a%2Bb&label=Pasty+Shop`)
+    expect(parsed.amount).toBe('1.5')
+    expect(parsed.message).toBe('Thanks? a+b')
+    // A literal '+' is not a space in Solana Pay URLs.
+    expect(parsed.label).toBe('Pasty+Shop')
+  })
+  it('keeps everything after the first ? in the query', () => {
+    expect(parseTransferRequest(`solana:${recipient}?message=Why?%20Because`).message).toBe('Why? Because')
+  })
+  it('rejects amounts that are not plain decimals', () => {
+    for (const bad of ['1e3', '-1', ' 1', '0x10']) {
+      expect(() => parseTransferRequest(`solana:${recipient}?amount=${encodeURIComponent(bad)}`)).toThrow()
+    }
+  })
+  it('refuses NaN rates and caps instead of producing nonsense', () => {
+    expect(() => calculatePoints(1_000_000n, 6, { pointsPerUnit: Number.NaN })).toThrow()
+    expect(planRedemption(1_000_000n, 500n, { pointValue: 10_000n, maxPercent: Number.NaN })).toEqual({ points: 0n, discount: 0n, toPay: 1_000_000n })
+  })
+})

@@ -23,7 +23,10 @@ export default function TabsLayout() {
   }, [loading, merchant])
   const insets = useSafeAreaInsets()
   return (
+    // Keyed on the shop: signing out (or into another shop) remounts every tab, so no sale, basket,
+    // chat or approval card from the last session survives.
     <Tabs
+      key={merchant?.id ?? 'signed-out'}
       screenOptions={{
         tabBarActiveTintColor: colors.sea,
         tabBarInactiveTintColor: colors.muted,

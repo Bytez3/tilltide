@@ -63,7 +63,7 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
 async function narrativeFor(merchant: MerchantRow, text: string, summary: Summary): Promise<string | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null
   try {
-    const client = new Anthropic()
+    const client = new Anthropic({ timeout: 60_000, maxRetries: 1 })
     const isHaiku = config.agent.model.startsWith('claude-haiku')
     const res = await client.beta.messages.create({
       model: config.agent.model,
@@ -131,9 +131,27 @@ export async function runDueReports() {
   const merchants = await sql<MerchantRow[]>`select * from merchants`
   for (const merchant of merchants) {
     const today = todayIn(merchant.timezone)
-    if (localTime(merchant.timezone) < merchant.closeTime) continue
-    const [done] = await sql`select 1 from daily_reports where merchant_id = ${merchant.id} and day = ${today}`
-    if (done) continue
-    await writeDailyReport(merchant, today).catch((err) => console.error(`End-of-day report for ${merchant.id} failed`, err))
+    // Catch up on yesterday too, if it was missed (server down at closing time, or a 23:59 close).
+    const yesterday = dayBefore(today)
+    const due = localTime(merchant.timezone) >= merchant.closeTime ? [yesterday, today] : [yesterday]
+    for (const day of due) {
+      const [done] = await sql`select 1 from daily_reports where merchant_id = ${merchant.id} and day = ${day}`
+      if (done) continue
+      // Only shops that traded that day get a catch-up report.
+      if (day !== today) {
+        const [traded] = await sql`
+          select 1 from payments where merchant_id = ${merchant.id}
+            and created_at >= (${day}::date::timestamp at time zone ${merchant.timezone})
+            and created_at < ((${day}::date + 1)::timestamp at time zone ${merchant.timezone}) limit 1`
+        if (!traded) continue
+      }
+      await writeDailyReport(merchant, day).catch((err) => console.error(`End-of-day report for ${merchant.id} ${day} failed`, err))
+    }
   }
+}
+
+function dayBefore(day: string): string {
+  const d = new Date(`${day}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() - 1)
+  return d.toISOString().slice(0, 10)
 }

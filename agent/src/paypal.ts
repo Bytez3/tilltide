@@ -60,6 +60,8 @@ export interface CreateOrderInput {
   platformFee?: { value: string; currency: string }
 }
 
+const PAYPAL_TIMEOUT_MS = 20_000
+
 export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch = fetch) {
   const base = config.apiBase ?? (config.env === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com')
   let token: { value: string; expiresAt: number } | null = null
@@ -73,6 +75,7 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
         'content-type': 'application/x-www-form-urlencoded',
       },
       body: 'grant_type=client_credentials',
+      signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS),
     })
     if (!res.ok) throw new PayPalError('PayPal authentication failed', res.status, undefined, 'auth')
     const body = (await res.json()) as { access_token: string; expires_in: number }
@@ -92,6 +95,8 @@ export function createPayPalClient(config: PayPalConfig, fetchImpl: typeof fetch
         ...extraHeaders,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      // A hung call is treated like a lost response: idempotency keys make the retry safe.
+      signal: AbortSignal.timeout(PAYPAL_TIMEOUT_MS),
     })
     const json = (await res.json().catch(() => ({}))) as { message?: string; details?: { issue?: string }[] }
     if (!res.ok) throw new PayPalError(json.message ?? `PayPal request failed (${res.status})`, res.status, json.details?.[0]?.issue)

@@ -53,6 +53,10 @@ export default function AgentScreen() {
       if (sweeps.length) setSweep(sweeps.at(-1)!)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      // Take the unanswered question back out (and back into the box), so the history never has
+      // two questions in a row and it's easy to try again.
+      setTurns(turns)
+      setDraft(text.trim())
     } finally {
       setThinking(false)
       setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 50)

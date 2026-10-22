@@ -4,6 +4,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 import { api, ApiError, Merchant, setSession } from '@/lib/api'
 import { useWallet } from '@/features/wallet/wallet'
 import { AppConfig } from '@/constants/app-config'
+import { useOnline } from '@/lib/connectivity'
 
 const sessionKey = (wallet: string) => `tilltide:session:${wallet}`
 /** A staff device has no wallet; its session is stored on its own. */
@@ -21,6 +22,8 @@ interface MerchantContextValue {
   /** Staff device: pair with the owner's one-time code. */
   pairStaff: (code: string) => Promise<void>
   isStaff: boolean
+  /** The saved session couldn't be checked because the server was unreachable. Retries on its own. */
+  unreachable: boolean
 }
 
 const MerchantContext = createContext<MerchantContextValue | null>(null)
@@ -29,6 +32,14 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   const { account, signIn, disconnect, isTestWallet } = useWallet()
   const [merchant, setMerchant] = useState<Merchant | null>(null)
   const [loading, setLoading] = useState(true)
+  const [unreachable, setUnreachable] = useState(false)
+  const [retry, setRetry] = useState(0)
+  const online = useOnline()
+
+  // Back online after a failed restore: try again, so a till opened on bad wifi recovers by itself.
+  useEffect(() => {
+    if (online && unreachable) setRetry((n) => n + 1)
+  }, [online, unreachable])
 
   const clearSession = useCallback(async (wallet?: string) => {
     setSession(null)
@@ -52,7 +63,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
             return
           }
           setSession(staffToken, () => clearSession())
-          const shop = await api.getShop().catch(() => null)
+          const shop = await api.getShop()
           if (!cancelled) setMerchant(shop)
           return
         }
@@ -64,8 +75,13 @@ export function MerchantProvider({ children }: PropsWithChildren) {
           throw e
         })
         if (!cancelled) setMerchant(shop)
-      } catch {
-        if (!cancelled) setMerchant(null)
+        if (!cancelled) setUnreachable(false)
+      } catch (e) {
+        if (cancelled) return
+        // Only the server saying "no" signs the till out. A network error keeps the saved
+        // session and shows "can't reach Tilltide" until the connection is back.
+        if (e instanceof ApiError && e.status === 0) setUnreachable(true)
+        else setMerchant(null)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -74,7 +90,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true
     }
-  }, [account, clearSession])
+  }, [account, clearSession, retry])
 
   const signInAndSetUp = useCallback(
     async (shopName: string) => {
@@ -128,7 +144,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
 
   return (
     <MerchantContext.Provider
-      value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant, pairStaff, isStaff: merchant?.role === 'staff' }}
+      value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant, pairStaff, isStaff: merchant?.role === 'staff', unreachable: unreachable && !merchant }}
     >
       {children}
     </MerchantContext.Provider>

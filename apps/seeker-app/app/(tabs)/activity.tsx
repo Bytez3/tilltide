@@ -44,6 +44,7 @@ export default function ActivityScreen() {
   })
   const [reportBusy, setReportBusy] = useState(false)
   const [confirmVoid, setConfirmVoid] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   // Finished approvals clear themselves after a few seconds; anything that needs checking stays.
   useEffect(() => {
@@ -77,24 +78,31 @@ export default function ActivityScreen() {
   }
 
   async function proposeSweep() {
-    if (!sweepAmount) return
+    if (!sweepAmount || busy) return
     setError(null)
+    setBusy(true)
     try {
       setSweep(await api.proposeSweep(sweepAmount, 'Sent from the Activity tab'))
       setSweepAmount(null)
     } catch (e) {
       setError(message(e))
+    } finally {
+      setBusy(false)
     }
   }
 
   async function startRefund(payment: Payment) {
+    if (busy) return
     setError(null)
+    setBusy(true)
     try {
       setRefund(
         await api.proposeRefund(payment.id, undefined, payment.label ? `Refund for ${payment.label}` : 'Refund'),
       )
     } catch (e) {
       setError(message(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -132,7 +140,8 @@ export default function ActivityScreen() {
   async function exportMonth() {
     setError(null)
     try {
-      const today = new Date().toISOString().slice(0, 10)
+      // "This month" in the shop's own timezone, not UTC.
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: merchant!.timezone }).format(new Date())
       const { url } = await api.exportLink(`${today.slice(0, 8)}01`, today)
       await Linking.openURL(url)
     } catch (e) {
@@ -210,6 +219,7 @@ export default function ActivityScreen() {
                   <Button
                     title="Review"
                     onPress={proposeSweep}
+                    loading={busy}
                     disabled={!(Number(sweepAmount) > 0)}
                     style={{ flex: 2 }}
                   />
@@ -250,7 +260,13 @@ export default function ActivityScreen() {
         </View>
       }
       ListFooterComponent={<View style={{ height: 8 }} />}
-      ListEmptyComponent={<Text style={ui.muted}>No sales yet. Take one from the Charge tab.</Text>}
+      ListEmptyComponent={
+        <Text style={[ui.muted, payments.error && { color: colors.danger }]}>
+          {payments.error
+            ? `Couldn't load sales. ${message(payments.error)} Pull down to try again.`
+            : 'No sales yet. Take one from the Charge tab.'}
+        </Text>
+      }
       renderItem={({ item }) => (
         <View style={[ui.card, ui.row, { justifyContent: 'space-between', borderRadius: 18 }]}>
           <View style={[ui.row, { gap: 12, flexShrink: 1, alignItems: 'flex-start' }]}>

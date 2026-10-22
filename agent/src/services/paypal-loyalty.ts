@@ -54,8 +54,12 @@ export async function payerForCode(merchantId: string, code: string): Promise<st
 export async function ledgerBalance(merchantId: string, payerKey: string, tx = sql): Promise<bigint> {
   const [row] = await tx<{ balance: bigint }[]>`
     select
-      coalesce((select sum(points) from payments
-        where merchant_id = ${merchantId} and payer = ${payerKey} and status = 'paid' and points_status = 'issued'), 0)
+      -- Points earned, less the share of any sale that was refunded (a full refund takes them all back).
+      coalesce((select sum(p.points - floor(p.points::numeric * coalesce(r.refunded, 0) / nullif(p.amount, 0))::bigint)
+        from payments p
+        left join (select payment_id, sum(amount) as refunded from refunds
+                   where status in ('pending', 'completed') group by payment_id) r on r.payment_id = p.id
+        where p.merchant_id = ${merchantId} and p.payer = ${payerKey} and p.status = 'paid' and p.points_status = 'issued'), 0)
       - coalesce((select sum(points_redeemed) from payments
         where merchant_id = ${merchantId} and loyalty_key = ${payerKey} and status in ('pending', 'paid')), 0)
       as balance`

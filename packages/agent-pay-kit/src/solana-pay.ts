@@ -39,16 +39,31 @@ export interface ParsedTransferRequest {
 
 export function parseTransferRequest(url: string): ParsedTransferRequest {
   if (!url.startsWith('solana:')) throw new Error('Not a Solana Pay URL')
-  const [path = '', query = ''] = url.slice('solana:'.length).split('?')
-  const params = new URLSearchParams(query)
-  const splToken = params.get('spl-token')
+  const rest = url.slice('solana:'.length)
+  // Split at the first '?' only: later '?' characters are legal inside query values.
+  const q = rest.indexOf('?')
+  const path = q === -1 ? rest : rest.slice(0, q)
+  const query = q === -1 ? '' : rest.slice(q + 1)
+  // Decode each value with decodeURIComponent, so a literal '+' stays '+' (URLSearchParams would make it a space).
+  const params = new Map<string, string[]>()
+  for (const pair of query.split('&').filter(Boolean)) {
+    const eq = pair.indexOf('=')
+    const key = decodeURIComponent(eq === -1 ? pair : pair.slice(0, eq))
+    const value = eq === -1 ? '' : decodeURIComponent(pair.slice(eq + 1))
+    params.set(key, [...(params.get(key) ?? []), value])
+  }
+  const get = (key: string) => params.get(key)?.[0]
+  const amount = get('amount')
+  // The spec allows only a plain non-negative decimal amount: no exponents, signs or spaces.
+  if (amount !== undefined && !/^\d+(\.\d+)?$/.test(amount)) throw new Error(`Invalid amount in Solana Pay URL: ${amount}`)
+  const splToken = get('spl-token')
   return {
     recipient: address(decodeURIComponent(path)),
-    amount: params.get('amount') ?? undefined,
+    amount,
     splToken: splToken ? address(splToken) : undefined,
-    references: params.getAll('reference').map((r) => address(r)),
-    label: params.get('label') ?? undefined,
-    message: params.get('message') ?? undefined,
-    memo: params.get('memo') ?? undefined,
+    references: (params.get('reference') ?? []).map((r) => address(r)),
+    label: get('label'),
+    message: get('message'),
+    memo: get('memo'),
   }
 }

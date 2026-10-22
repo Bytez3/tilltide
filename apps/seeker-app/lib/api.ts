@@ -149,11 +149,17 @@ export function setSession(token: string | null, signedOut?: () => void) {
   onSignedOut = signedOut ?? null
 }
 
+const REQUEST_TIMEOUT_MS = 20_000
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response
+  // React Native's fetch never times out by itself; a half-dead connection would leave the till spinning.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
     res = await fetch(`${AppConfig.apiUrl}${path}`, {
       ...init,
+      signal: controller.signal,
       headers: {
         'content-type': 'application/json',
         ...(sessionToken ? { authorization: `Bearer ${sessionToken}` } : {}),
@@ -163,6 +169,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     reportReachable(false)
     throw new ApiError("Can't reach the Tilltide server. Check your connection.", 0)
+  } finally {
+    clearTimeout(timer)
   }
   reportReachable(true)
   const body = await res.json().catch(() => ({}))
@@ -195,6 +203,7 @@ export const api = {
   /** `amount` is typed on the keypad; with a basket it's added on top as "Other". The server prices the basket. */
   createPayment: (amount: string | undefined, rail: Rail = 'solana', usePoints = false, loyaltyCode?: string, items?: BasketLine[]) =>
     request<Payment & { url: string | null }>('/shop/payments', post({ amount, rail, usePoints, loyaltyCode, items: items?.length ? items : undefined })),
+  blockhash: () => request<{ blockhash: string; lastValidBlockHeight: string; slot: string }>('/shop/blockhash'),
   voidSale: (id: string) => request<Payment>(`/shop/payments/${id}/void`, post()),
   listItems: () => request<Item[]>('/shop/items'),
   createItem: (name: string, price: string, icon?: string) => request<Item>('/shop/items', post({ name, price, icon })),
@@ -237,5 +246,5 @@ export const api = {
     finishPayPalOnboarding: (url: string) => request<{ ok: true }>('/sandbox/paypal/onboard', post({ url })),
   },
 
-  getPoints: (wallet: string) => request<{ points: string; configured: boolean }>(`/points/${wallet}`),
+  getPoints: (wallet: string) => request<{ points: string; configured: boolean }>(`/shop/points/${wallet}`),
 }

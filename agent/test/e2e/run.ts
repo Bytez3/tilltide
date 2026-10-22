@@ -386,6 +386,8 @@ async function main() {
         ['GET', '/shop/reports'],
         ['POST', '/shop/reports', {}],
         ['POST', '/shop/export', { from: '2026-01-01', to: '2026-01-02' }],
+        ['GET', '/shop/blockhash'],
+        ['GET', `/shop/points/${customer.address}`],
       ]
       for (const [method, path, payload] of forbidden) {
         const r = await api(method, path, payload, staff)
@@ -671,6 +673,17 @@ async function main() {
     await step('customer points lookup', async () => {
       const r = await api('GET', `/points/${customer.address}`)
       assert.deepEqual(r.body, { wallet: customer.address, points: '9', configured: true })
+      // Points are honoured only at the shop that issued them: another shop sees none to spend.
+      const here = await api('GET', `/shop/points/${customer.address}`, undefined, tillToken)
+      assert.equal(here.body.points, '9')
+      const elsewhere = await api('GET', `/shop/points/${customer.address}`, undefined, await signIn(owner))
+      assert.equal(elsewhere.status, 200, JSON.stringify(elsewhere.body))
+      assert.equal(elsewhere.body.points, '0', "another shop can't take this shop's points")
+      // The phone signs transfers with a blockhash from the server, so the app needs no RPC key.
+      const latest = await api('GET', '/shop/blockhash', undefined, tillToken)
+      assert.equal(latest.status, 200)
+      assert.match(latest.body.blockhash, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/)
+      assert.match(latest.body.lastValidBlockHeight, /^\d+$/)
     })
 
     await step('points redemption: wallet fetches the transaction, pays the rest and burns points; cheating is refused', async () => {
@@ -754,6 +767,11 @@ async function main() {
       const shop = (await api('GET', '/shop', undefined, tillToken)).body
       assert.equal(shop.paypal.status, 'connected')
       assert.equal(shop.paypal.feePercent, 0.5)
+      // A session alone can't redirect PayPal money: no re-linking over a connected account, no payout email.
+      assert.equal((await api('POST', '/shop/paypal/connect', undefined, tillToken)).status, 409)
+      const email = await api('PATCH', '/shop', { paypalEmail: 'thief@example.com' }, tillToken)
+      assert.equal(email.status, 400)
+      assert.match(email.body.error, /Connect your PayPal account/)
     })
 
     await step('PayPal: QR opens checkout → customer approves → return page captures → Paid ✓', async () => {
@@ -1051,18 +1069,27 @@ async function main() {
       const { ledgerBalance } = await import('../../src/services/paypal-loyalty')
       const shopId = (await api('GET', '/shop', undefined, tillToken)).body.id
       const before = await ledgerBalance(shopId, 'paypal:BUYER1')
-      assert.equal(before, 7n + 3n + 20n, 'points from the three PayPal sales')
+      // Points from the three PayPal sales (7 + 3 + 20), less each sale's refunded share, worked out here
+      // independently: a sale refunded by a fraction loses that fraction of its points, rounded down.
+      const sales = await sql<{ points: bigint; amount: bigint; refunded: bigint }[]>`
+        select p.points, p.amount, coalesce((select sum(r.amount) from refunds r
+          where r.payment_id = p.id and r.status in ('pending', 'completed')), 0)::bigint as refunded
+        from payments p where p.payer = 'paypal:BUYER1' and p.status = 'paid' and p.points_status = 'issued'`
+      const clawedBack = sales.reduce((sum, r) => sum + (BigInt(r.points) * BigInt(r.refunded)) / BigInt(r.amount), 0n)
+      assert.ok(clawedBack > 0n, 'some of these sales were partly refunded in the refund tests')
+      assert.equal(before, 7n + 3n + 20n - clawedBack, 'points from the three PayPal sales, less refunded points')
 
       await api('PATCH', '/shop', { pointValue: '0.10' }, tillToken)
       const unknown = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: 'ZZZZZ-ZZZZZ' }, tillToken)
       assert.equal(unknown.status, 400)
-      // 30 points x 0.10 = 3.00 off a 10.00 bill (cap 50%). The code is case and dash insensitive.
+      // Every point x 0.10 off a 10.00 bill (well under the 50% cap). The code is case and dash insensitive.
       const sale = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code!.toLowerCase().replace('-', '') }, tillToken)
       assert.equal(sale.status, 201, JSON.stringify(sale.body))
-      assert.equal(sale.body.pointsRedeemed, '30')
-      assert.equal(sale.body.discount, '3000000')
+      assert.equal(sale.body.pointsRedeemed, before.toString())
+      assert.equal(sale.body.discount, (before * 100_000n).toString())
       const orderId = new URL(sale.body.url).searchParams.get('token')!
-      assert.equal(paypal.order(orderId).purchase_units[0].amount.value, '7.00')
+      const toPay = 10 - Number(before) * 0.1
+      assert.equal(paypal.order(orderId).purchase_units[0].amount.value, toPay.toFixed(2))
       // The points are held by the open sale: a second sale with the same code gets none.
       assert.equal(await ledgerBalance(shopId, 'paypal:BUYER1'), 0n)
       const second = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code }, tillToken)
@@ -1070,8 +1097,8 @@ async function main() {
 
       paypal.approve(orderId)
       await waitFor(tillToken, sale.body.id, (p) => p.status === 'paid', 'loyalty sale paid')
-      // Earned on the 7.00 actually paid.
-      await until('ledger points', async () => (await ledgerBalance(shopId, 'paypal:BUYER1')) === 7n)
+      // Earned on what was actually paid (1 point per whole pound).
+      await until('ledger points', async () => (await ledgerBalance(shopId, 'paypal:BUYER1')) === BigInt(Math.floor(toPay)))
       await api('PATCH', '/shop', { pointValue: '0.01' }, tillToken)
     })
 

@@ -29,7 +29,8 @@ export async function redeemExportToken(token: string) {
  */
 export function csvCell(value: unknown): string {
   let s = value === null || value === undefined ? '' : String(value)
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  // Defuse spreadsheet formulas, but leave plain numbers (like -3.50 on a refund) as numbers.
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 

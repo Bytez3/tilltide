@@ -28,6 +28,28 @@ async function pointsBalance(owner: Address): Promise<bigint> {
     .catch(() => 0n)
 }
 
+/**
+ * Wallet points this customer earned at this shop, minus what they've spent here. Every shop shares
+ * one points token, so a shop honours only the points it issued itself: another shop (with its own,
+ * possibly generous, earn rate) can never hand out discounts here.
+ */
+export async function shopPointsBalance(merchantId: string, wallet: string, excludePaymentId?: string): Promise<bigint> {
+  const [row] = await sql<{ earned: bigint; spent: bigint }[]>`
+    select coalesce(sum(case when points_status = 'issued' then points else 0 end), 0)::bigint as earned,
+           coalesce(sum(points_redeemed), 0)::bigint as spent
+    from payments
+    where merchant_id = ${merchantId} and rail = 'solana' and payer = ${wallet} and status = 'paid'
+      ${excludePaymentId ? sql`and id <> ${excludePaymentId}` : sql``}`
+  const balance = (row?.earned ?? 0n) - (row?.spent ?? 0n)
+  return balance > 0n ? balance : 0n
+}
+
+/** What a customer can spend at this shop: their points here, and no more than their wallet holds. */
+export async function spendablePoints(merchantId: string, wallet: Address, excludePaymentId?: string): Promise<bigint> {
+  const [onchain, here] = await Promise.all([pointsBalance(wallet), shopPointsBalance(merchantId, wallet, excludePaymentId)])
+  return onchain < here ? onchain : here
+}
+
 export function redemptionMemo(paymentId: string) {
   return `tilltide:pay:${paymentId}`
 }
@@ -46,7 +68,7 @@ export async function buildRedeemTransaction(paymentId: string, account: string)
   const customer = address(account)
   const token = config.tokens[payment.tokenSymbol as 'USDC' | 'PYUSD']
   // The discount is worked out in the shop's currency; only the rest is converted to tokens.
-  const plan = planRedemption(payment.amount, await pointsBalance(customer), {
+  const plan = planRedemption(payment.amount, await spendablePoints(merchant!.id, customer, payment.id), {
     pointValue: merchant!.pointValue,
     maxPercent: merchant!.redeemMaxPercent,
   })
@@ -95,8 +117,18 @@ export async function findRedeemPayment(payment: PaymentRow, merchant: MerchantR
       if (!result.retryable) rejected.add(signature)
       continue
     }
-    const burned = config.pointsMint ? -(result.payerDeltas[config.pointsMint] ?? 0n) : 0n
-    const discount = (burned > 0n ? burned : 0n) * merchant.pointValue
+    // Points count only if they left circulation: the payer's balance went down AND the token's total
+    // across the transaction went down by as much. Moving points to another wallet nets to zero.
+    const payerDrop = config.pointsMint ? -(result.payerDeltas[config.pointsMint] ?? 0n) : 0n
+    const netBurn = config.pointsMint ? -(result.mintDeltas[config.pointsMint] ?? 0n) : 0n
+    let burned = payerDrop < netBurn ? payerDrop : netBurn
+    if (burned < 0n) burned = 0n
+    // And only points earned at this shop can buy a discount here.
+    if (burned > 0n && result.payer) {
+      const allowed = await shopPointsBalance(merchant.id, result.payer, payment.id)
+      if (burned > allowed) burned = allowed
+    }
+    const discount = burned * merchant.pointValue
     // Tokens received, converted back at the rate the sale was priced at.
     const receivedInCurrency = fromTokenUnits(result.received, payment.fxRate)
     const reason =
@@ -105,7 +137,7 @@ export async function findRedeemPayment(payment: PaymentRow, merchant: MerchantR
         : receivedInCurrency + discount < payment.amount
           ? `Received ${fromBaseUnits(result.received, token.decimals)} ${token.symbol} + ${burned} points, short of ${fromBaseUnits(payment.amount, LEDGER_DECIMALS)} ${payment.currency}`
           : null
-    if (!reason) return { status: 'paid' as const, payment: result, pointsRedeemed: burned > 0n ? burned : 0n, discount }
+    if (!reason) return { status: 'paid' as const, payment: result, pointsRedeemed: burned, discount }
     rejected.add(signature)
     mismatch = reason
   }

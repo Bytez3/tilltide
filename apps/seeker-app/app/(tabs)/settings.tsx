@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons'
 import { isAddress } from '@solana/kit'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Linking, ScrollView, Text, View } from 'react-native'
 import { MenuEditor } from '@/components/menu-editor'
@@ -17,6 +18,8 @@ export default function SettingsScreen() {
   const [staffLabel, setStaffLabel] = useState('')
   const [staffCode, setStaffCode] = useState<string | null>(null)
   const [staffMinutes, setStaffMinutes] = useState(15)
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null)
+  const queryClient = useQueryClient()
   const [staffList, setStaffList] = useState<{ id: string; label: string; since: string }[]>([])
   const [staffMessage, setStaffMessage] = useState<string | null>(null)
   const [paypalEmail, setPaypalEmail] = useState('')
@@ -46,7 +49,10 @@ export default function SettingsScreen() {
     setPointValue(merchant.pointValue)
     setPaypalEmail(merchant.paypal.email ?? '')
     setMaxPercent(String(merchant.redeemMaxPercent))
-  }, [merchant])
+    // Reseed the form only when a different shop loads: saving the PayPal email or re-checking PayPal
+    // also replaces `merchant`, and must not wipe edits that haven't been saved yet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [merchant?.id])
 
   // "Saved" is a confirmation, not a state: let it go after a moment. Errors stay until the next save.
   useEffect(() => {
@@ -60,8 +66,8 @@ export default function SettingsScreen() {
     setMessage(null)
     try {
       const pointsPerUnit = Number(rate)
-      if (!rate.trim() || !Number.isFinite(pointsPerUnit) || pointsPerUnit < 0 || pointsPerUnit > 1000) {
-        throw new Error('Points rate must be a number from 0 to 1000')
+      if (!rate.trim() || !Number.isFinite(pointsPerUnit) || pointsPerUnit < 0 || pointsPerUnit > 100) {
+        throw new Error('Points rate must be a number from 0 to 100')
       }
       const percent = Number(maxPercent)
       if (!/^\d+(\.\d{1,6})?$/.test(pointValue.trim())) throw new Error('Point value must be a number like 0.01')
@@ -99,6 +105,8 @@ export default function SettingsScreen() {
         replace(await api.refreshPayPal())
       } else {
         await Linking.openURL(url)
+        // The server now marks the shop as connecting, which shows the "Check PayPal" button.
+        replace(await api.refreshPayPal())
         setPaypalMessage('Finish connecting on PayPal, then come back and tap "Check PayPal".')
       }
     } catch (e) {
@@ -148,15 +156,26 @@ export default function SettingsScreen() {
       setStaffCode(invite.code)
       setStaffMinutes(invite.expiresInMinutes)
       setStaffLabel('')
+      queryClient.invalidateQueries({ queryKey: ['staff'] })
+      // Hide the code once it has expired, so nobody types a dead one.
+      setTimeout(() => setStaffCode((c) => (c === invite.code ? null : c)), invite.expiresInMinutes * 60_000)
     } catch (e) {
       setStaffMessage(e instanceof Error ? e.message : String(e))
     }
   }
 
   async function removeStaff(id: string) {
+    // Two taps, so a stray tap doesn't sign a staff phone out mid-shift.
+    if (confirmRemove !== id) {
+      setConfirmRemove(id)
+      setTimeout(() => setConfirmRemove((c) => (c === id ? null : c)), 4000)
+      return
+    }
+    setConfirmRemove(null)
     try {
       await api.removeStaff(id)
       setStaffList(await api.listStaff())
+      queryClient.invalidateQueries({ queryKey: ['staff'] })
     } catch (e) {
       setStaffMessage(e instanceof Error ? e.message : String(e))
     }
@@ -165,8 +184,12 @@ export default function SettingsScreen() {
   async function checkPoints() {
     setPoints(null)
     if (!isAddress(lookup.trim())) return setPoints('Not a Solana address')
-    const result = await api.getPoints(lookup.trim()).catch((e: Error) => ({ points: e.message, configured: true }))
-    setPoints(result.configured ? `${result.points} points` : 'Points are not set up on the server yet')
+    try {
+      const result = await api.getPoints(lookup.trim())
+      setPoints(result.configured ? `${result.points} points` : 'Points are not set up on the server yet')
+    } catch (e) {
+      setPoints(e instanceof Error ? e.message : String(e))
+    }
   }
 
   if (!merchant) return null
@@ -337,7 +360,7 @@ export default function SettingsScreen() {
                 accessibilityRole="button"
                 onPress={() => removeStaff(d.id)}
               >
-                Remove
+                {confirmRemove === d.id ? 'Tap to confirm' : 'Remove'}
               </Text>
             </View>
           ))}

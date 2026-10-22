@@ -44,6 +44,11 @@ export type VerifiedPayment =
       memos: string[]
       /** How the payer's balance of every mint changed in this transaction (negative = spent or burned). */
       payerDeltas: Record<string, bigint>
+      /**
+       * The net change of every mint across all accounts in the transaction. A burn shows as negative;
+       * a transfer between wallets nets to zero. Use it to tell "spent" from "moved".
+       */
+      mintDeltas: Record<string, bigint>
     }
   /** `retryable`: the RPC hasn't caught up yet; check again rather than treating it as a bad payment. */
   | { ok: false; signature: Signature; reason: string; retryable?: boolean; memos?: string[] }
@@ -97,13 +102,24 @@ export async function verifyPayment(rpc: SolanaRpc, signature: Signature, expect
     }
   }
 
+  // Paid entirely with points (nothing of `mint` moved): the payer is the fee payer, the first signer.
+  if (!payer) {
+    const keys = tx.transaction.message.accountKeys as readonly (string | { pubkey: string; signer?: boolean })[]
+    const first = keys.find((k) => typeof k !== 'string' && k.signer) ?? keys[0]
+    if (first) payer = (typeof first === 'string' ? first : first.pubkey) as Address
+  }
+
   const payerDeltas: Record<string, bigint> = {}
   if (payer) {
     const mints = new Set([...(pre ?? []), ...(post ?? [])].filter((b) => b.owner === payer).map((b) => b.mint))
     for (const m of mints) payerDeltas[m] = balanceOf(post, payer, m) - balanceOf(pre, payer, m)
   }
 
-  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime, memos, payerDeltas }
+  const mintDeltas: Record<string, bigint> = {}
+  for (const b of post ?? []) mintDeltas[b.mint] = (mintDeltas[b.mint] ?? 0n) + BigInt(b.uiTokenAmount.amount)
+  for (const b of pre ?? []) mintDeltas[b.mint] = (mintDeltas[b.mint] ?? 0n) - BigInt(b.uiTokenAmount.amount)
+
+  return { ok: true, signature, payer, received, slot: tx.slot, blockTime: tx.blockTime, memos, payerDeltas, mintDeltas }
 }
 
 export type PaymentSearch =
@@ -152,10 +168,15 @@ export async function waitForPayment(
   expected: ExpectedPayment,
   { intervalMs = 2000, signal }: WaitForPaymentOptions = {},
 ): Promise<VerifiedPayment> {
+  // One set across polls, so each junk transaction on the reference is fetched only once.
+  const rejected = new Set<string>()
   while (!signal?.aborted) {
-    const found = await findPayment(rpc, reference, expected)
+    const found = await findPayment(rpc, reference, expected, rejected)
     if (found.status === 'paid') return found.payment
-    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, intervalMs)
+      signal?.addEventListener('abort', () => (clearTimeout(timer), resolve()), { once: true })
+    })
   }
   throw new Error('Stopped waiting for payment')
 }

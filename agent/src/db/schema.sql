@@ -236,3 +236,12 @@ alter table payments add column if not exists voided_at timestamptz;
 
 -- An icon for each menu item (a key from ITEM_ICONS in services/items.ts; the app maps it to a glyph and colour).
 alter table items add column if not exists icon text not null default 'other';
+
+-- Customers' points accounts that Tilltide paid to open (it pays the account rent). Used to stop a
+-- wallet closing its account to pocket the rent and having it reopened, again and again.
+create table if not exists points_accounts (
+  wallet text primary key,
+  merchant_id uuid not null references merchants(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists points_accounts_created_idx on points_accounts (created_at);

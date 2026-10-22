@@ -1,21 +1,11 @@
 import { html } from 'hono/html'
 import { address } from '@solana/kit'
-import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
 import { fromBaseUnits } from '@tilltide/agent-pay-kit'
 import { config } from './config'
 import { LEDGER_DECIMALS, sql, type PaymentRow } from './db'
-import { rpc } from './solana'
 import { codeFor, ledgerBalance } from './services/paypal-loyalty'
+import { spendablePoints } from './services/redeem'
 
-async function pointsBalance(wallet: string): Promise<string | null> {
-  if (!config.pointsMint) return null
-  const [ata] = await findAssociatedTokenPda({ owner: address(wallet), mint: config.pointsMint, tokenProgram: TOKEN_PROGRAM_ADDRESS })
-  return rpc
-    .getTokenAccountBalance(ata, { commitment: 'confirmed' })
-    .send()
-    .then((r) => r.value.amount)
-    .catch(() => '0')
-}
 
 /**
  * Public receipt for one payment, for the customer to scan off the till. The id is an unguessable
@@ -34,7 +24,8 @@ export async function renderReceipt(paymentId: string) {
     payment.paidAt ?? payment.createdAt,
   )
   const isSolana = payment.rail === 'solana' && payment.payer
-  const balance = isSolana ? await pointsBalance(payment.payer!) : null
+  // What this customer can spend at this shop (points from other shops don't count here).
+  const balance = isSolana && config.pointsMint ? (await spendablePoints(payment.merchantId, address(payment.payer!))).toString() : null
   const earned = payment.pointsStatus === 'issued' && payment.points ? payment.points.toString() : null
   // PayPal customers: points live in Tilltide's ledger, spent with a loyalty code.
   const paypalLoyalty =

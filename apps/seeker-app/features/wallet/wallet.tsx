@@ -7,10 +7,12 @@ import {
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   signAndSendTransactionMessageWithSigners,
+  type Blockhash,
 } from '@solana/kit'
 import { createSolanaDevnet, MobileWalletProvider, useMobileWallet } from '@wallet-ui/react-native-kit'
 import { PropsWithChildren, useMemo } from 'react'
 import { AppConfig } from '@/constants/app-config'
+import { api } from '@/lib/api'
 import type { TilltideWallet } from './types'
 
 const cluster = createSolanaDevnet({ url: AppConfig.rpcUrl })
@@ -24,7 +26,7 @@ export function WalletProvider({ children }: PropsWithChildren) {
 }
 
 export function useWallet(): TilltideWallet {
-  const { account, chain, identity, signIn, disconnect, client, getTransactionSigner } = useMobileWallet()
+  const { account, chain, identity, signIn, disconnect, getTransactionSigner } = useMobileWallet()
   return useMemo<TilltideWallet>(
     () => ({
       account: account ? { address: account.address } : undefined,
@@ -39,8 +41,13 @@ export function useWallet(): TilltideWallet {
       },
       disconnect,
       async getLatestBlockhash() {
-        const { context, value } = await client.rpc.getLatestBlockhash().send()
-        return { blockhash: value.blockhash, lastValidBlockHeight: value.lastValidBlockHeight, slot: context.slot }
+        // From the Tilltide server's RPC, so the app never carries an RPC key.
+        const latest = await api.blockhash()
+        return {
+          blockhash: latest.blockhash as Blockhash,
+          lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
+          slot: BigInt(latest.slot),
+        }
       },
       async signAndSend(build, latest) {
         if (!account) throw new Error('Connect the till wallet first')
@@ -56,6 +63,6 @@ export function useWallet(): TilltideWallet {
         return getBase58Decoder().decode(await signAndSendTransactionMessageWithSigners(message))
       },
     }),
-    [account, chain, client, disconnect, getTransactionSigner, identity.uri, signIn],
+    [account, chain, disconnect, getTransactionSigner, identity.uri, signIn],
   )
 }

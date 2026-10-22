@@ -7,6 +7,8 @@ import { rpc } from '../solana'
 import { checkPayPalPayment, getPayPal, issuePointsForPayment, markPaymentPaid, notePaymentProblem } from './payments'
 import { executeRefund } from './refunds'
 import { runDueReports } from './reports'
+
+let reportsRunning = false
 import { findRedeemPayment } from './redeem'
 
 /** Per payment: reference transactions already known not to be a valid payment (see findPayment). */
@@ -124,8 +126,14 @@ async function tick() {
       }
     }
 
-    // End-of-day reports for shops past closing time.
-    await runDueReports().catch((err) => console.error('End-of-day reports failed', err))
+    // End-of-day reports for shops past closing time. Run alongside the watcher, not inside it:
+    // a slow Claude or RPC call must never hold up payments, expiries or points.
+    if (!reportsRunning) {
+      reportsRunning = true
+      void runDueReports()
+        .catch((err) => console.error('End-of-day reports failed', err))
+        .finally(() => (reportsRunning = false))
+    }
 
     // Retry points that failed or never confirmed. issuePointsForPayment checks the chain before resending.
     if (!config.pointsMint || !config.pointsAuthoritySecret) return

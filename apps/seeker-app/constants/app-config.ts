@@ -1,3 +1,14 @@
+/**
+ * Everything in EXPO_PUBLIC_* is built into the app, and anyone can read an app's files. Refuse to start
+ * with anything that looks like a secret in it, rather than quietly shipping a paid RPC key.
+ */
+function publicOnly(url: string): string {
+  if (/api[-_]?key|apikey|token=|secret|auth=/i.test(url)) {
+    throw new Error('EXPO_PUBLIC_SOLANA_RPC_URL contains a key. Keys must stay on the server (SOLANA_RPC_URL in the API), never in the app.')
+  }
+  return url
+}
+
 
 export class AppConfig {
   // Wallets verify `uri` against the app's Digital Asset Links. Point it at the real site before mainnet.
@@ -7,8 +18,9 @@ export class AppConfig {
     uri: process.env.EXPO_PUBLIC_APP_URI ?? 'https://api-production-83900.up.railway.app',
     icon: 'favicon.png',
   }
-  // Devnet until M4. The browser sandbox points this at a local validator.
-  static rpcUrl = process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com'
+  // Devnet until M4. The browser sandbox points this at a local validator. The phone app itself no longer
+  // calls an RPC (blockhashes come from the Tilltide server); this is only the wallet adapter's cluster.
+  static rpcUrl = publicOnly(process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com')
   static sandbox = process.env.EXPO_PUBLIC_SANDBOX === '1'
   // The live API. For local development set EXPO_PUBLIC_API_URL (10.0.2.2 reaches your computer from the emulator).
   static apiUrl = process.env.EXPO_PUBLIC_API_URL ?? 'https://api-production-83900.up.railway.app'

@@ -15,7 +15,11 @@ export interface PointsRule {
 
 /** Whole points for a payment. Rounds down, so partial units never earn a point. */
 export function calculatePoints(amount: bigint, decimals: number, rule: PointsRule, bonus = false): bigint {
-  if (rule.pointsPerUnit < 0) throw new Error('pointsPerUnit must be >= 0')
+  // Rates are exact to hundredths of a point (e.g. 1.25); finer rates are rounded to the nearest 0.01.
+  if (!Number.isFinite(rule.pointsPerUnit) || rule.pointsPerUnit < 0) throw new Error('pointsPerUnit must be a number >= 0')
+  if (rule.bonusMultiplier !== undefined && (!Number.isFinite(rule.bonusMultiplier) || rule.bonusMultiplier < 0)) {
+    throw new Error('bonusMultiplier must be a number >= 0')
+  }
   // Work in hundredths of a point so rates like 1.5 points per unit stay exact.
   const rateHundredths = BigInt(Math.round(rule.pointsPerUnit * 100))
   const multiplierHundredths = BigInt(Math.round((bonus ? (rule.bonusMultiplier ?? 1) : 1) * 100))

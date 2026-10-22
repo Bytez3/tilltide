@@ -10,7 +10,7 @@ import { secureHeaders } from 'hono/secure-headers'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import { runAgent } from './agent'
-import { buildRedeemTransaction, RedeemError } from './services/redeem'
+import { buildRedeemTransaction, RedeemError, spendablePoints } from './services/redeem'
 import { renderReceipt } from './receipt'
 import { clientIp, rateLimit, requireOrigin } from './rate-limit'
 import { reserveAgentRequest, UsageLimitError } from './services/usage'
@@ -370,7 +370,7 @@ shop.patch('/', async (c) => {
       name: z.string().trim().min(1).max(80).optional(),
       ownerWallet: wallet.nullable().optional(),
       token: z.enum(['USDC', 'PYUSD']).optional(),
-      pointsPerUnit: z.number().min(0).max(1000).optional(),
+      pointsPerUnit: z.number().min(0).max(100).optional(),
       /** What one point is worth when spent, e.g. "0.01". */
       pointValue: z.string().regex(/^\d+(\.\d{1,6})?$/).optional(),
       redeemMaxPercent: z.number().int().min(0).max(90).optional(),
@@ -384,6 +384,11 @@ shop.patch('/', async (c) => {
       closeTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
     }),
   )
+  // On live PayPal, money goes only to the PayPal account the shop connected through PayPal itself.
+  // A payout email can be set with just a session, so it would let a stolen session redirect takings.
+  if (input.paypalEmail && config.paypalPlatform.requireConnected) {
+    throw new HTTPException(400, { message: 'Connect your PayPal account in Settings instead of entering an email.' })
+  }
   if (input.ownerWallet && input.ownerWallet === merchant.wallet) {
     throw new HTTPException(400, { message: 'The owner wallet must be different from the till wallet' })
   }
@@ -446,6 +451,25 @@ shop.delete('/items/:id', async (c) => {
   if (!id.success) throw new HTTPException(404, { message: 'Item not found' })
   await archiveItem(merchant.id, id.data).catch(itemErrors)
   return c.json({ ok: true })
+})
+
+/**
+ * Owner: a recent blockhash for signing a transfer on the phone. Served from the server's own RPC,
+ * so the app never needs an RPC address (or any RPC key) of its own.
+ */
+shop.get('/blockhash', async (c) => {
+  await myShop(c)
+  const { context, value } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+  return c.json({ blockhash: value.blockhash, lastValidBlockHeight: value.lastValidBlockHeight.toString(), slot: context.slot.toString() })
+})
+
+/** Owner: a customer's points that can be spent at this shop (wallet points earned here, or a PayPal ledger key). */
+shop.get('/points/:wallet', async (c) => {
+  const merchant = await myShop(c)
+  const wallet = c.req.param('wallet')
+  if (!isAddress(wallet)) throw new HTTPException(400, { message: 'Not a Solana address' })
+  if (!config.pointsMint) return c.json({ wallet, points: '0', configured: false })
+  return c.json({ wallet, points: (await spendablePoints(merchant.id, address(wallet))).toString(), configured: true })
 })
 
 /** Owner only: cancel a cash or card sale that was recorded by mistake. */
@@ -519,7 +543,10 @@ shop.post('/payments', async (c) => {
       return c.json({ ...serializePayment(payment), url }, 201)
     } catch (err) {
       if (err instanceof PayPalSaleError) throw new HTTPException(400, { message: err.message })
-      throw new HTTPException(502, { message: `PayPal: ${(err as Error).message}` })
+      if (err instanceof PayPalError) throw new HTTPException(502, { message: `PayPal: ${err.message}` })
+      // Anything else is ours (database, network): log it, don't show it.
+      console.error('paypal sale failed', err)
+      throw new HTTPException(502, { message: "Couldn't start the PayPal payment. Try again in a moment." })
     }
   }
   try {
@@ -628,6 +655,10 @@ shop.post('/export', async (c) => {
 /** Starts Connect-with-PayPal: returns PayPal's onboarding link for the owner to open. */
 shop.post('/paypal/connect', async (c) => {
   const merchant = await myShop(c)
+  // Linking a different PayPal account over a connected one would redirect every PayPal sale.
+  if (merchant.paypalStatus === 'connected') {
+    throw new HTTPException(409, { message: 'PayPal is already connected. Email info@bytez3.com to change the account.' })
+  }
   try {
     return c.json({ url: await startPayPalOnboarding(merchant) })
   } catch (err) {

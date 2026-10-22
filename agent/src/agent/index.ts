@@ -12,7 +12,7 @@ import { issuePointsForPayment, serializePayment } from '../services/payments'
 import { getDailySummary, reconcileDay, todayIn } from '../services/summary'
 import { proposeSweep, serializeSweep } from '../services/sweeps'
 
-const client = new Anthropic()
+const client = new Anthropic({ timeout: 90_000, maxRetries: 2 })
 
 const SYSTEM_PROMPT = `You are Tilltide, the back-office assistant for a small independent shop.
 The shop takes payments PayPal-first: PayPal checkout (PayPal or card) at the till, and PayPal's stablecoin PYUSD (or USDC) on Solana into its till wallet. Everything is priced and reported in the shop's own currency (see context); wallet sales are converted from it at the day's exchange rate.

@@ -40,6 +40,7 @@ export async function refreshPayPalConnection(merchantId: string): Promise<Merch
 /** Who a PayPal sale for this shop is paid to, and whether Tilltide can take its fee. */
 export function paypalPayee(merchant: MerchantRow): { payee?: { merchantId?: string; email?: string }; feeAllowed: boolean } {
   if (merchant.paypalStatus === 'connected' && merchant.paypalMerchantId) return { payee: { merchantId: merchant.paypalMerchantId }, feeAllowed: true }
-  if (merchant.paypalEmail) return { payee: { email: merchant.paypalEmail }, feeAllowed: false }
+  // Email payees are a sandbox / non-partner convenience only (see PATCH /shop).
+  if (merchant.paypalEmail && !config.paypalPlatform.requireConnected) return { payee: { email: merchant.paypalEmail }, feeAllowed: false }
   return { feeAllowed: false }
 }

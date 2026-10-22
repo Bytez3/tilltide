@@ -77,7 +77,8 @@ export async function getDailySummary(merchant: MerchantRow, date: string) {
     pointsIssued: paid.filter((p) => p.pointsStatus === 'issued').reduce((sum, p) => sum + (p.points ?? 0n), 0n).toString(),
     byRail: {
       solana: fromBaseUnits(paid.filter((p) => p.rail === 'solana').reduce((s, p) => s + cash(p), 0n), token.decimals),
-      paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + p.amount, 0n), token.decimals),
+      // Money received, like `takings`: on a points sale, the part paid with points isn't PayPal money.
+      paypal: fromBaseUnits(paid.filter((p) => p.rail === 'paypal').reduce((s, p) => s + cash(p), 0n), token.decimals),
       cash: fromBaseUnits(paid.filter((p) => p.rail === 'cash').reduce((s, p) => s + p.amount, 0n), token.decimals),
       card: fromBaseUnits(paid.filter((p) => p.rail === 'card').reduce((s, p) => s + p.amount, 0n), token.decimals),
     },
@@ -157,7 +158,7 @@ export async function reconcileDay(merchant: MerchantRow, date: string) {
     token: token.symbol,
     ledgerPaidCount: payments.filter((p) => p.status === 'paid').length,
     // PayPal takings settle to the merchant's PayPal balance, not the till wallet.
-    paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount, 0n), token.decimals),
+    paypalTakings: fromBaseUnits(paypalPaid.reduce((s, p) => s + p.amount - p.discount, 0n), token.decimals),
     // Cash and card-reader sales are recorded for the books; that money never reaches the till wallet either.
     cashTakings: fromBaseUnits(sumPaid(payments, 'cash'), token.decimals),
     cardTakings: fromBaseUnits(sumPaid(payments, 'card'), token.decimals),

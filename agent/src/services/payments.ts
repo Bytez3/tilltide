@@ -8,7 +8,9 @@ import {
   sweepFee,
   type VerifiedPayment,
 } from '@tilltide/agent-pay-kit'
+import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
 import { config } from '../config'
+import { alert } from '../alerts'
 import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SaleItem } from '../db'
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
@@ -293,6 +295,13 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   if (!authorityPromise || !config.pointsMint) return { issued: false, reason: 'Points mint is not configured' }
   const authority = await authorityPromise
 
+  // Opening a customer's points account costs Tilltide rent. Guard it so it can't be farmed.
+  const refusal = await pointsAccountRefusal(merchant!, payment)
+  if (refusal) {
+    await sql`update payments set points = 0, points_status = 'none' where id = ${payment.id} and points_status is null`
+    return { issued: false, reason: refusal }
+  }
+
   // Claim the row so two workers can't mint for the same payment.
   const claimed = await sql`
     update payments set points = ${points.toString()}, points_status = 'sending', points_claimed_at = now()
@@ -317,6 +326,36 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
     // Left as 'sending'. settleInFlightMint decides later whether it landed.
     return { issued: false, reason: `Points transaction not confirmed yet: ${err instanceof Error ? err.message : err}` }
   }
+}
+
+const NEW_POINTS_ACCOUNTS_PER_SHOP_PER_DAY = Number(process.env.POINTS_NEW_ACCOUNTS_PER_SHOP_DAY ?? 50)
+const NEW_POINTS_ACCOUNTS_PER_DAY = Number(process.env.POINTS_NEW_ACCOUNTS_PER_DAY ?? 500)
+/** A wallet's first points need a sale of at least 1 unit of the shop's currency. */
+const MIN_SALE_FOR_NEW_POINTS_ACCOUNT = 10n ** BigInt(LEDGER_DECIMALS)
+
+/**
+ * Why Tilltide won't open a points account for this payer now, or null if it's fine (or the account
+ * already exists). Tilltide pays each account's rent; a customer who closes it gets the rent back,
+ * so reopening on demand would let anyone drain the points authority one tiny sale at a time.
+ */
+async function pointsAccountRefusal(merchant: MerchantRow, payment: PaymentRow): Promise<string | null> {
+  const payer = payment.payer as Address
+  const [ata] = await findAssociatedTokenPda({ owner: payer, mint: config.pointsMint!, tokenProgram: TOKEN_PROGRAM_ADDRESS })
+  const existing = await rpc.getAccountInfo(ata, { commitment: 'confirmed', encoding: 'base64' }).send()
+  if (existing.value) return null
+  const [opened] = await sql`select 1 from points_accounts where wallet = ${payer}`
+  if (opened) return 'This wallet closed its points account; Tilltide only opens one once'
+  if (payment.amount - payment.discount < MIN_SALE_FOR_NEW_POINTS_ACCOUNT) return 'A first points sale must be at least 1.00'
+  const [counts] = await sql<{ shop: number; all: number }[]>`
+    select count(*) filter (where merchant_id = ${merchant.id})::int as shop, count(*)::int as all
+    from points_accounts where created_at > now() - interval '1 day'`
+  if ((counts?.shop ?? 0) >= NEW_POINTS_ACCOUNTS_PER_SHOP_PER_DAY || (counts?.all ?? 0) >= NEW_POINTS_ACCOUNTS_PER_DAY) {
+    void alert(`points-accounts:${merchant.id}`, `${merchant.name}: daily limit on new points accounts reached; points skipped`)
+    return 'Daily limit on new points accounts reached'
+  }
+  // Recorded before the mint, so a crash can't open an account without counting it.
+  await sql`insert into points_accounts (wallet, merchant_id) values (${payer}, ${merchant.id}) on conflict do nothing`
+  return null
 }
 
 export function serializePayment(p: PaymentRow) {

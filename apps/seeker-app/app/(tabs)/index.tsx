@@ -6,11 +6,12 @@ import * as Haptics from 'expo-haptics'
 import { GettingStarted } from '@/components/getting-started'
 import { ItemIcon } from '@/components/item-icon'
 import { PaidTick } from '@/components/paid-tick'
+import { Unreachable } from '@/components/unreachable'
 import { Welcome } from '@/components/welcome'
 import { Button, Chip, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
-import { api, Payment, Rail } from '@/lib/api'
+import { api, ApiError, Payment, Rail } from '@/lib/api'
 import { currencySymbol, formatAmount, formatMoney } from '@/lib/format'
 import { AppConfig } from '@/constants/app-config'
 
@@ -25,10 +26,16 @@ const BAND = {
 
 const RAIL_LABEL: Record<Rail, string> = { paypal: 'PayPal', solana: 'Wallet', cash: 'Cash', card: 'Card' }
 
+/** Pence from a typed or stored price. Accepts a comma as the decimal point ("20,50"). */
+function toPence(value: string): number {
+  const n = Number(value.trim().replace(',', '.'))
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : 0
+}
+
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
 
 export default function ChargeScreen() {
-  const { merchant, loading, isStaff } = useMerchant()
+  const { merchant, loading, isStaff, unreachable } = useMerchant()
   const [amount, setAmount] = useState('')
   // PayPal first: most customers have PayPal or a card; wallets are the second option.
   const [rail, setRail] = useState<Rail>('paypal')
@@ -43,12 +50,14 @@ export default function ChargeScreen() {
   const [mode, setMode] = useState<'menu' | 'keypad' | null>(null)
   const [cashGiven, setCashGiven] = useState('')
   const [showGiven, setShowGiven] = useState(false)
-  const givenPence = Number(cashGiven) > 0 ? Math.round(Number(cashGiven) * 100) : 0
+  const givenPence = toPence(cashGiven)
   const items = useQuery({
     queryKey: ['items', merchant?.id],
     queryFn: () => api.listItems(),
     enabled: !!merchant,
-    staleTime: 60_000,
+    // Staff tills pick up the owner's menu changes within a minute, and at once when the app is reopened.
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   })
   // The sale the screen is showing. Poll responses for any other sale are ignored.
   const current = useRef<string | null>(null)
@@ -61,7 +70,7 @@ export default function ChargeScreen() {
   )
 
   if (loading) return <ActivityIndicator style={{ marginTop: 48 }} color={colors.sea} />
-  if (!merchant) return <Welcome />
+  if (!merchant) return unreachable ? <Unreachable /> : <Welcome />
 
   function press(key: string) {
     setError(null)
@@ -86,8 +95,8 @@ export default function ChargeScreen() {
       if (!latest) continue
       setPayment({ ...latest, url: created.url })
       if (latest.status === 'paid') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        // Keep polling briefly (up to 30s) so the points line updates once they're minted.
+        // Buzz once, when it first turns paid; polling carries on briefly for the points line.
+        if (paidAt === null) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
         paidAt ??= Date.now()
         if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0' || Date.now() - paidAt > 30_000)
           return
@@ -102,8 +111,9 @@ export default function ChargeScreen() {
     setCreating(true)
     setError(null)
     try {
-      const lines = Object.entries(basket).map(([id, qty]) => ({ id, qty }))
-      const typed = Number(amount) > 0 ? amount.replace(/\.$/, '') : undefined
+      // Only what's on screen: an item removed from the menu since it was tapped is dropped, not sent.
+      const lines = basketLines.map(({ item, qty }) => ({ id: item.id, qty }))
+      const typed = typedPence > 0 ? (typedPence / 100).toFixed(2) : undefined
       const created = await api.createPayment(
         typed,
         activeRail,
@@ -117,6 +127,8 @@ export default function ChargeScreen() {
       else watch({ ...created, url: created.url ?? '' })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      // The server refused an item (changed or removed elsewhere): fetch the current menu.
+      if (e instanceof ApiError && e.status === 400) items.refetch()
     } finally {
       setCreating(false)
     }
@@ -138,6 +150,7 @@ export default function ChargeScreen() {
     setCashGiven('')
     setShowGiven(false)
     setLoyaltyCode('')
+    setUsePoints(false)
     setShowLoyalty(false)
   }
 
@@ -312,7 +325,7 @@ export default function ChargeScreen() {
 
   const menu = items.data ?? []
   const activeMode = mode ?? (menu.length > 0 ? 'menu' : 'keypad')
-  const pence = (price: string) => Math.round(Number(price) * 100)
+  const pence = (price: string) => toPence(price)
   const basketLines = menu.filter((i) => basket[i.id]).map((i) => ({ item: i, qty: basket[i.id]! }))
   const typedPence = Number(amount) > 0 ? pence(amount) : 0
   const totalPence = basketLines.reduce((sum, l) => sum + pence(l.item.price) * l.qty, 0) + typedPence
@@ -353,7 +366,7 @@ export default function ChargeScreen() {
           adjustsFontSizeToFit
         >
           {currencySymbol(currency)}
-          {basketLines.length ? total : amount || '0.00'}
+          {valid ? total : '0.00'}
         </Text>
         {basketLines.length > 0 && (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'center' }}>
@@ -530,7 +543,7 @@ export default function ChargeScreen() {
         <Button
           title={
             valid
-              ? `${recorded ? `Record ${activeRail === 'cash' ? 'cash' : 'card'} sale` : 'Charge'} ${currencySymbol(currency)}${basketLines.length ? total : amount}`
+              ? `${recorded ? `Record ${activeRail === 'cash' ? 'cash' : 'card'} sale` : 'Charge'} ${currencySymbol(currency)}${total}`
               : activeMode === 'menu'
                 ? 'Tap items to add them'
                 : 'Enter an amount'
