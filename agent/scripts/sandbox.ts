@@ -41,6 +41,10 @@ const API_PORT = Number(process.env.PORT ?? 8787)
 const PAYPAL_PORT = 28799
 const ADMIN_DB = process.env.SANDBOX_ADMIN_DATABASE_URL ?? 'postgres://tilltide:tilltide@localhost:5432/tilltide'
 const DB = 'tilltide_sandbox'
+/** Set for the hosted judge demo, e.g. https://demo.tilltide.bytez3.com. Unset for the local sandbox. */
+const PUBLIC = process.env.SANDBOX_PUBLIC_URL?.replace(/\/$/, '') || undefined
+/** Folder with the exported web app (`expo export -p web`), served at / by the hosted demo. */
+const WEB_DIR = process.env.SANDBOX_WEB_DIR
 
 function secretKeyBytes() {
   const jwk = generateKeyPairSync('ed25519').privateKey.export({ format: 'jwk' })
@@ -82,8 +86,9 @@ Object.assign(process.env, {
   SOLANA_CLUSTER: 'devnet',
   SOLANA_RPC_URL: `http://127.0.0.1:${RPC_PORT}`,
   PORT: String(API_PORT),
-  AUTH_DOMAIN: 'sandbox.tilltide.test',
-  PUBLIC_URL: `http://localhost:${API_PORT}`,
+  // A hosted demo (SANDBOX_PUBLIC_URL) serves the web app from the same origin as the API.
+  AUTH_DOMAIN: PUBLIC ? new URL(PUBLIC).host : 'sandbox.tilltide.test',
+  PUBLIC_URL: PUBLIC ?? `http://localhost:${API_PORT}`,
   CORS_ORIGINS: process.env.CORS_ORIGINS ?? 'http://localhost:8081,http://127.0.0.1:8081',
   POINTS_MINT: pointsMint.address,
   POINTS_AUTHORITY_SECRET: JSON.stringify([...pointsAuthorityBytes]),
@@ -214,10 +219,37 @@ app.post('/sandbox/paypal/approve', async (c) => {
   return c.json({ ok: true })
 })
 
+/**
+ * The browser test wallet needs the chain, but the validator only listens on localhost. Pass through
+ * just the calls a wallet makes, so the hosted demo doesn't expose the validator's admin methods.
+ */
+const RPC_METHODS = new Set(['getLatestBlockhash', 'sendTransaction', 'getBalance', 'getSignatureStatuses', 'getTokenAccountBalance', 'getAccountInfo', 'getHealth', 'simulateTransaction', 'getFeeForMessage', 'getMinimumBalanceForRentExemption'])
+app.post('/sandbox/rpc', async (c) => {
+  const body = await c.req.json().catch(() => null)
+  const calls = Array.isArray(body) ? body : [body]
+  if (!calls.length || calls.some((r) => !r || !RPC_METHODS.has(r.method))) return c.json({ error: 'Method not allowed in the sandbox' }, 400)
+  const res = await fetch(`http://127.0.0.1:${RPC_PORT}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  return c.body(await res.text(), res.status as 200, { 'content-type': 'application/json' })
+})
+
+let root: { fetch: typeof app.fetch } = app
+if (WEB_DIR) {
+  const { Hono } = await import('hono')
+  const { serveStatic } = await import('@hono/node-server/serve-static')
+  const web = new Hono()
+  // The app's own screens and files; everything else is the API. Unknown app paths get index.html.
+  const screens = new Set(['/', '/activity', '/agent', '/settings'])
+  web.use('/_expo/*', serveStatic({ root: WEB_DIR }))
+  web.use('/assets/*', serveStatic({ root: WEB_DIR }))
+  web.get('*', async (c, next) => (screens.has(c.req.path) ? serveStatic({ root: WEB_DIR, path: 'index.html' })(c, next) : next()))
+  web.route('/', app)
+  root = web
+}
+
 startWatcher()
-serve({ fetch: app.fetch, port: API_PORT }, () => {
+serve({ fetch: root.fetch, port: API_PORT }, () => {
   console.log(`\nTilltide sandbox ready`)
-  console.log(`  API          http://localhost:${API_PORT}`)
+  console.log(`  API          ${PUBLIC ?? `http://localhost:${API_PORT}`}${WEB_DIR ? ' (and the web app)' : ''}`)
   console.log(`  Solana RPC   http://127.0.0.1:${RPC_PORT} (local validator)`)
   console.log(`  Customer     ${customer.address} (1000 USDC, 1000 PYUSD)`)
   console.log(`  Owner wallet ${owner.address}`)

@@ -2,9 +2,19 @@
 
 **A PayPal-first till and AI back office for small shops: PayPal at the counter, loyalty that customers actually spend, and an AI assistant that keeps the books but can never move a penny without the owner.**
 
-Repo: https://github.com/Bytez3/tilltide · Video: _add YouTube link_ · Licence: MIT
+Try it: **https://demo.tilltide.bytez3.com** · Repo: https://github.com/Bytez3/tilltide · Video: _add YouTube link_ · Licence: MIT
 
 ---
+
+## Try it (for judges)
+
+Open **https://demo.tilltide.bytez3.com** in any browser. No account, wallet or install is needed.
+1. Type a shop name and press **Sign in with wallet**. A throwaway test wallet is made for you.
+2. In **Settings**, press **Connect PayPal** and add a couple of menu items.
+3. On **Charge**, tap items and choose PayPal or wallet. The QR screen has "act as the customer" buttons, so you can pay as the customer too.
+4. Try **Activity** (refunds, sending takings to the owner, the end-of-day report) and the **Assistant** tab.
+
+The demo runs on its own local Solana chain with a stand-in PayPal, so nothing real is touched. To run it yourself, see "Try it in a browser" in the [README](https://github.com/Bytez3/tilltide#try-it-in-a-browser-sandbox). The phone app (Android, with a Solana wallet such as Phantom or Solflare) talks to the devnet API at https://tilltide.bytez3.com.
 
 ## Inspiration
 

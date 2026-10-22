@@ -55,6 +55,10 @@ The agent (Claude, with tool use) has five tools: `get_payments`, `get_daily_sum
 
 ## Try it in a browser (sandbox)
 
+**Hosted demo: https://demo.tilltide.bytez3.com**, no install or wallet needed. Open it (a phone-sized window works best), type a shop name and press **Sign in with wallet**: a throwaway test wallet is made for you in the browser. Then, in Settings, press **Connect PayPal**, add a few menu items, and take sales from the Charge tab. The QR screen has "act as the customer" buttons, so you can play both sides of the counter. Everything runs on its own local Solana chain with a stand-in PayPal, and resets when the demo restarts, so nothing real is touched. It's built from `agent/Dockerfile.demo`.
+
+To run the same thing on your own computer:
+
 ```bash
 pnpm --filter @tilltide/agent sandbox          # local Solana chain + API on :8787 (needs the Postgres container)
 pnpm --filter @tilltide/seeker-app web:sandbox # the app on http://localhost:8081

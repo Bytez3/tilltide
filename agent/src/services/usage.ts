@@ -17,6 +17,14 @@ export async function reserveAgentRequest(merchant: MerchantRow) {
     await sql`update agent_usage set requests = requests - 1 where merchant_id = ${merchant.id} and day = current_date`
     throw new UsageLimitError(`Daily agent limit reached (${config.agent.dailyLimit} questions). It resets at midnight UTC.`)
   }
+  const cap = config.agent.globalDailyLimit
+  if (cap !== null) {
+    const [total] = await sql<{ requests: number }[]>`select coalesce(sum(requests), 0)::int as requests from agent_usage where day = current_date`
+    if (total!.requests > cap) {
+      await sql`update agent_usage set requests = requests - 1 where merchant_id = ${merchant.id} and day = current_date`
+      throw new UsageLimitError('The assistant has answered all the questions it can today. It resets at midnight UTC.')
+    }
+  }
 }
 
 export async function recordUsage(

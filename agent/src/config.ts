@@ -50,6 +50,8 @@ export const config = {
     /** Chat questions are short lookups; low effort keeps answers fast and cheap. */
     effort: (process.env.AGENT_EFFORT ?? 'low') as 'low' | 'medium' | 'high' | 'xhigh' | 'max',
     dailyLimit: Number(process.env.AGENT_DAILY_LIMIT ?? 50),
+    /** Cap across all shops (unset = none). The public demo sets it, since anyone can make a shop there. */
+    globalDailyLimit: process.env.AGENT_GLOBAL_DAILY_LIMIT ? Number(process.env.AGENT_GLOBAL_DAILY_LIMIT) : null,
   },
   /** Tilltide's fee on sweeps. Off unless a treasury wallet is set. */
   sweepFee: {
