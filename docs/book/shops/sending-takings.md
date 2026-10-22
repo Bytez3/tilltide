@@ -8,7 +8,7 @@ PayPal sales already land in your PayPal account, and cash and card-reader sales
 
 1. Make sure your **owner wallet** is set in **Settings → Takings and reports**.
 2. In **Activity**, tap **Send takings to owner**. It suggests everything in the till; change the amount if you want to leave a float.
-3. Tap **Review**. The card shows exactly what will happen: how much reaches you, Tilltide's 0.5% fee, and your owner wallet's address in groups of four so you can check it.
+3. Tap **Review**. The card shows exactly what will happen: how much reaches you, Tilltide's fee (0.5%, shown as an amount), and your owner wallet's address in groups of four so you can check it.
 4. Tap **Confirm & sign**. Your wallet app shows the transfer. Sign it.
 5. The card shows **Sent ✓** once the transfer is confirmed onchain.
 

@@ -20,7 +20,7 @@ Setting up takes about 30 minutes. You need an Android phone for the counter, a 
 7. **Add your owner wallet and closing time** under **Settings → Takings and reports**.
 8. **Pair staff phones** if you have staff. See [Staff tills](staff.md).
 
-The **Getting started** strip on the Charge screen ticks these off as you go, and disappears after your first sale.
+The **Getting started** strip on the Charge screen tracks the essentials (connecting PayPal, your owner wallet, your first sale, and optionally your menu and a staff phone) and disappears once the essentials are done. You can also hide it.
 
 ## Do a test sale
 

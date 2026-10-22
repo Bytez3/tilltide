@@ -31,7 +31,7 @@ console.log(`Paid by ${paid.payer}`)
 * `toBaseUnits(value: string, decimals)` → `bigint`. Exact; rejects too many decimals.
 * `fromBaseUnits(amount: bigint, decimals)` → `string`, with trailing zeros removed.
 
-Money is always `bigint`. There's no floating point anywhere in the kit.
+Money is always `bigint`; amounts never pass through floating point. (The one number that isn't a bigint is a loyalty earn rate, such as 1.5 points per unit, which is exact to hundredths.)
 
 ### `tokens`
 
@@ -41,13 +41,13 @@ Money is always `bigint`. There's no floating point anywhere in the kit.
 
 * `encodeTransferRequest({ recipient, amount, token, reference, label?, message?, memo? })` builds a spec-correct `solana:` URL (spaces as `%20`).
 * `parseTransferRequest(url)` reads one back.
-* `encodeTransactionRequest(link)` wraps an https link for a [transaction request](https://docs.solanapay.com/spec#specification-transaction-request), where the wallet fetches a transaction from your server.
+* `encodeTransactionRequest(link)` wraps an http(s) link for a [transaction request](https://docs.solanapay.com/spec#specification-transaction-request), where the wallet fetches a transaction from your server.
 
 ### `watcher`
 
 * `findPayment(rpc, reference, expected, rejected?)` checks **every** transaction carrying the reference and returns `{ status: 'paid', payment }`, `{ status: 'mismatch', reason }` or `{ status: 'none' }`. Pass the same `rejected` set on every poll, so each bad transaction is fetched only once.
-* `verifyPayment(rpc, signature, expected)` checks that one transaction moved at least `expected.amount` to the recipient. It reads token balance changes, so it works for any wallet (`transfer` or `transferChecked`, Token or Token-2022). It returns the payer, the amount received, any memos, and how the payer's balance of every mint changed.
-* `waitForPayment(rpc, reference, expected, { intervalMs?, signal? })` polls until paid.
+* `verifyPayment(rpc, signature, expected)` checks that one transaction moved at least `expected.amount` to the recipient. It reads token balance changes, so it works for any wallet (`transfer` or `transferChecked`, Token or Token-2022). It returns the payer, the amount received, any memos, how the payer's balance of every mint changed (`payerDeltas`), and the net change of every mint across the whole transaction (`mintDeltas`). A burn shows in `mintDeltas` as negative; tokens merely moved to another wallet net to zero, so use it to tell "spent" from "moved".
+* `waitForPayment(rpc, reference, expected, { intervalMs?, signal? })` polls until paid, fetching each junk transaction only once, and stops promptly when `signal` aborts.
 
 A result with `retryable: true` means the RPC hasn't caught up yet. Check again; don't treat it as a bad payment.
 
@@ -57,7 +57,7 @@ Why check every transaction? The reference is public (it's in the QR code). Chec
 
 ### `loyalty`
 
-* `calculatePoints(amount, decimals, { pointsPerUnit, bonusMultiplier? }, bonus?)` gives whole points, rounding down, with exact fractional rates.
+* `calculatePoints(amount, decimals, { pointsPerUnit, bonusMultiplier? }, bonus?)` gives whole points, rounding down. Rates and multipliers are exact to hundredths (1.25 is fine; 0.015 is treated as 0.02).
 * `getIssuePointsInstructions({ payer, mintAuthority, pointsMint, customer, points })` creates the customer's points account if needed and mints into it.
 
 ### `redeem`
@@ -74,6 +74,10 @@ Why check every transaction? The reference is public (it's in the QR code). Chec
 ## Using it with an AI agent
 
 The pattern Tilltide follows: give the agent tools that **read** (payments, summaries, reconciliation) and tools that **propose** (a sweep or refund stored as `proposed`). The human signs the exact proposal on their own device, and the server verifies the signed transaction or message before anything moves. The agent never holds a key.
+
+## Publishing
+
+Publish with `pnpm publish`, which swaps in the built `dist` entry points (ESM, CommonJS and types for both). Plain `npm publish` would ship source paths and a broken package.
 
 ## Licence
 

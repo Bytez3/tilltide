@@ -3,7 +3,8 @@
 ## Keys
 
 * **The phone holds no private keys.** The till wallet lives in the wallet app (Seed Vault, Phantom, Solflare) and signs through Mobile Wallet Adapter.
-* **The server holds one key:** the loyalty mint authority, in an environment variable. It can mint loyalty points, and nothing else.
+* **The server holds one key:** the loyalty mint authority, in an environment variable. It mints loyalty points and pays the fees and account rent for doing so, so it holds a little SOL. It can't touch any shop's money.
+* **The app holds no keys at all,** not even an RPC key: blockhashes for signing come from the server, and the app refuses to start if a key-like value is put in its public settings.
 * **No PayPal passwords.** Shops connect through PayPal's partner onboarding; refunds use PayPal-Auth-Assertion on the shop's behalf.
 
 ## Sign-in and sessions
@@ -21,6 +22,11 @@
 * **Payments** are verified from token balance changes, and every transaction on the reference is checked, so dust can't block or fake a payment.
 * **Baskets** are priced on the server from the shop's own menu.
 * **Points** have a state machine (`sending` → `issued`), so they're never minted twice.
+* **Points stay with their shop.** All shops share one points token, but each shop honours only the points it issued itself, so one shop's earn rate can't create discounts at another.
+* **Spending points means burning them.** A points sale only counts points that left circulation; moving them to another wallet doesn't count.
+* **Points-account rent can't be farmed:** each wallet's account is opened once, a first points sale must be at least 1.00, and there are daily limits per shop and overall.
+* **PayPal payouts can't be redirected with a session alone:** on live PayPal a payout email can't be set, and a connected PayPal account can't be re-linked from the app.
+* **Refunded PayPal sales give back their points** in proportion to the refund.
 
 ## The server
 

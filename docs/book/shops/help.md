@@ -18,7 +18,7 @@ The customer probably sent too little. Ask them to check their wallet. The sale 
 **I typed a cash sale wrong.**
 Void it from **Activity** (owner only) and record it again. See [Refunds and mistakes](refunds-and-voids.md).
 
-**Staff can't see the Assistant or Settings.**
+**Staff can't see the Assistant, and Settings only shows the shop name and Sign out.**
 That's by design. See [Staff tills](staff.md).
 
 Still stuck? Email [info@bytez3.com](mailto:info@bytez3.com).

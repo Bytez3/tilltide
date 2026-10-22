@@ -8,7 +8,7 @@ Tilltide runs on [Railway](https://railway.app) from `agent/Dockerfile` (see `ra
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres |
 | `AUTH_DOMAIN` | yes | The domain in Sign In With Solana messages, e.g. `tilltide.bytez3.com` |
-| `PUBLIC_URL` | yes | Public https URL (receipts, PayPal return links, Solana Pay requests) |
+| `PUBLIC_URL` | yes in production | Public URL for receipts, PayPal return links and Solana Pay requests (defaults to `http://localhost:8787`; must be https on mainnet) |
 | `SOLANA_CLUSTER` / `SOLANA_RPC_URL` | | `devnet` (default) or `mainnet`, and a private RPC for mainnet |
 | `POINTS_MINT` / `POINTS_AUTHORITY_SECRET` | for loyalty | The loyalty token and its mint authority |
 | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_ENV` | for PayPal | REST app credentials; `sandbox` or `live` |
@@ -21,6 +21,11 @@ Tilltide runs on [Railway](https://railway.app) from `agent/Dockerfile` (see `ra
 | `ORIGIN_SECRET` | | Header value Cloudflare adds, to refuse direct requests |
 | `ANDROID_CERT_SHA256` | | For Digital Asset Links |
 | `ALERT_WEBHOOK_URL` | | Discord or Slack webhook for anything that needs a human |
+| `POINTS_NEW_ACCOUNTS_PER_SHOP_DAY` / `POINTS_NEW_ACCOUNTS_PER_DAY` | | Daily limits on new customer points accounts (defaults 50 per shop, 500 overall) |
+| `PAYPAL_CURRENCY` / `PAYPAL_API_BASE` | | Override PayPal's currency and API host (testing) |
+| `FX_RATES` | | Fixed exchange rates for testing (refused on mainnet) |
+| `SEEKER_TEST_WALLETS` | | Wallets treated as Seeker owners in the sandbox and tests |
+| `PORT` | | Port to listen on (default 8787) |
 | `RATE_LIMIT_PER_IP` / `RATE_LIMIT_AUTH` / `WATCH_INTERVAL_MS` | | Tuning |
 
 ## Custom domain with Cloudflare

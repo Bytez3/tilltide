@@ -18,6 +18,9 @@ In **Settings → Loyalty**:
 * **PayPal customers** get a **loyalty code** on their receipt (like `KYJZV-BKKT9`). Next time, they show it and you type it with **+ Loyalty code** before charging.
 * **Wallet customers** receive points straight into their wallet. Next time, tap **+ Let them use points** and their wallet spends them as part of paying.
 * **Cash and card-reader sales** don't earn points, because Tilltide can't tell who paid.
+* **Points belong to your shop.** Points a customer earned at another Tilltide shop can't be spent at yours, and yours can't be spent there.
+* **Refunds take points back.** If you refund a PayPal sale, the points it earned are taken back in proportion.
+* **A wallet's first points** come from a sale of at least £1.00, which stops points accounts being opened for pennies.
 
 The receipt shows the customer's balance and what it's worth, for example "Worth £0.60 off your next visit".
 
