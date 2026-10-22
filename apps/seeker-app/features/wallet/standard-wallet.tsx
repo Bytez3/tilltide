@@ -55,7 +55,7 @@ import { colors, fonts, ui } from '@/constants/theme'
 import { api } from '@/lib/api'
 import type { TilltideWallet } from './types'
 
-const CHAIN = 'solana:devnet' as const
+const CHAIN = AppConfig.chain
 /** The wallet the owner last used, so a reload reconnects to it without asking. */
 const LAST_WALLET = 'tilltide:wallet'
 
@@ -226,7 +226,7 @@ function WalletPicker({ visible, wallets, onPick }: { visible: boolean; wallets:
               <Text style={ui.muted}>No wallet yet? Install Phantom or Solflare from your phone&apos;s app store, then come back.</Text>
             </>
           )}
-          <Text style={[ui.muted, { textAlign: 'center', color: colors.sea, fontFamily: fonts.semibold }]} accessibilityRole="button" onPress={() => onPick(null)}>
+          <Text style={[ui.muted, { textAlign: 'center', color: colors.link, fontFamily: fonts.semibold }]} accessibilityRole="button" onPress={() => onPick(null)}>
             Cancel
           </Text>
         </Pressable>

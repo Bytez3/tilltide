@@ -134,7 +134,7 @@ export function startMockPayPal(port: number) {
       if (order.status !== 'APPROVED') return send(422, { message: 'Not approved', details: [{ issue: 'ORDER_NOT_APPROVED' }] })
       state.captures++
       order.status = 'COMPLETED'
-      order.payer = { payer_id: 'BUYER1' }
+      order.payer ??= { payer_id: 'BUYER1' }
       const status = state.holdForReview ? 'PENDING' : 'COMPLETED'
       order.purchase_units[0].payments = { captures: [{ id: `CAP-${order.id}`, status, amount: order.purchase_units[0].amount }] }
     }
@@ -143,7 +143,8 @@ export function startMockPayPal(port: number) {
   server.listen(port)
   return {
     state,
-    approve: (id: string) => (orders.get(id).status = 'APPROVED'),
+    /** The customer approves with their PayPal account; PayPal reports the payer from approval on. */
+    approve: (id: string, payerId = 'BUYER1') => Object.assign(orders.get(id), { status: 'APPROVED', payer: { payer_id: payerId } }),
     releaseReview: (id: string) => (orders.get(id).purchase_units[0].payments.captures[0].status = 'COMPLETED'),
     order: (id: string) => orders.get(id),
     refunds: () => [...refundsByRequestId.values()],

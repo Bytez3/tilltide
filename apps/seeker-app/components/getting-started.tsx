@@ -54,7 +54,7 @@ export function GettingStarted() {
     return (
       <View style={[ui.card, { borderColor: colors.sea, borderWidth: 1, paddingVertical: 12, gap: 8 }]}>
         <View style={[ui.row, { justifyContent: 'space-between' }]}>
-          <Text style={[ui.label, { color: colors.sea }]}>
+          <Text style={[ui.label, { color: colors.link }]}>
             Getting started · {doneCount}/{steps.length}
           </Text>
           <Pressable accessibilityRole="button" onPress={() => setExpanded(true)} hitSlop={8}>

@@ -13,6 +13,7 @@ import { runAgent } from './agent'
 import { buildRedeemTransaction, RedeemError, spendablePoints } from './services/redeem'
 import { renderReceipt } from './receipt'
 import { clientIp, rateLimit, requireOrigin } from './rate-limit'
+import { approveOwnerWallet, OwnerWalletError, ownerWalletChallenge } from './services/owner-wallet'
 import { reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, createStaffInvite, redeemStaffInvite, revokeToken, sessionForToken, verifySignIn, type Session } from './auth'
 import { config } from './config'
@@ -390,8 +391,15 @@ shop.patch('/', async (c) => {
   if (input.paypalEmail && config.paypalPlatform.requireConnected) {
     throw new HTTPException(400, { message: 'Connect your PayPal account in Settings instead of entering an email.' })
   }
-  if (input.ownerWallet && input.ownerWallet === merchant.wallet) {
-    throw new HTTPException(400, { message: 'The owner wallet must be different from the till wallet' })
+  // Totals add up sales in the shop's currency, so it's fixed once the shop has taken money.
+  if (input.currency && input.currency !== merchant.currency) {
+    const [sold] = await sql`select 1 from payments where merchant_id = ${merchant.id} and status in ('pending', 'paid') limit 1`
+    if (sold) throw new HTTPException(400, { message: "The currency can't change once the shop has taken sales" })
+  }
+  // Pointing the takings somewhere new needs the till wallet's signature (POST /shop/owner-wallet).
+  // Clearing it only stops sweeps, so a session is enough for that.
+  if (input.ownerWallet && input.ownerWallet !== merchant.ownerWallet) {
+    throw new HTTPException(400, { message: 'Changing the owner wallet needs your till wallet to approve it' })
   }
   const [row] = await sql<MerchantRow[]>`
     update merchants set
@@ -408,6 +416,34 @@ shop.patch('/', async (c) => {
       timezone = ${input.timezone ?? merchant.timezone}
     where id = ${merchant.id} returning *`
   return c.json(serializeMerchant(row!))
+})
+
+/** Step 1 of changing the owner wallet: the wording for the till wallet to sign. */
+shop.post('/owner-wallet/challenge', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ ownerWallet: wallet }))
+  try {
+    return c.json(await ownerWalletChallenge(merchant, input.ownerWallet))
+  } catch (err) {
+    if (err instanceof OwnerWalletError) throw new HTTPException(400, { message: err.message })
+    throw err
+  }
+})
+
+/** Step 2: the signed challenge sets it. */
+shop.post('/owner-wallet', async (c) => {
+  const merchant = await myShop(c)
+  const input = await body(c, z.object({ signedMessage: z.base64().max(4000), signature: z.base64().max(200) }))
+  try {
+    const row = await approveOwnerWallet(merchant, {
+      signedMessage: new Uint8Array(Buffer.from(input.signedMessage, 'base64')),
+      signature: new Uint8Array(Buffer.from(input.signature, 'base64')),
+    })
+    return c.json(serializeMerchant(row))
+  } catch (err) {
+    if (err instanceof OwnerWalletError) throw new HTTPException(400, { message: err.message })
+    throw err
+  }
 })
 
 // ---- Quick-sale items (the shop's menu). Staff can read it; only the owner changes it. ----------

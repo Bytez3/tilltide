@@ -90,7 +90,7 @@ export function Chip({
         opacity: pressed ? 0.8 : 1,
       })}
     >
-      <Text style={{ color: onBand ? (selected ? colors.band : colors.bandInk) : selected ? colors.seaInk : colors.sea, fontFamily: fonts.semibold, fontSize: 14 }}>{label}</Text>
+      <Text style={{ color: onBand ? (selected ? colors.band : colors.bandInk) : selected ? colors.seaInk : colors.link, fontFamily: fonts.semibold, fontSize: 14 }}>{label}</Text>
     </Pressable>
   )
 }
@@ -146,7 +146,7 @@ export function Segmented<T extends string | number>({
               elevation: selected ? 1 : 0,
             }}
           >
-            <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 15, color: selected ? (onBand ? colors.band : colors.sea) : onBand ? colors.bandMuted : colors.muted }}>
+            <Text style={{ fontFamily: selected ? fonts.bold : fonts.medium, fontSize: 15, color: selected ? (onBand ? colors.band : colors.link) : onBand ? colors.bandMuted : colors.muted }}>
               {label(option)}
             </Text>
           </Pressable>

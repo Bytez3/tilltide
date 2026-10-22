@@ -312,7 +312,7 @@ export default function ActivityScreen() {
             </Text>
             {!isStaff && item.rail === 'paypal' && item.status === 'paid' && (
               <Pressable accessibilityRole="button" onPress={() => startRefund(item)}>
-                <Text style={{ color: colors.sea, fontFamily: fonts.semibold }}>Refund</Text>
+                <Text style={{ color: colors.link, fontFamily: fonts.semibold }}>Refund</Text>
               </Pressable>
             )}
             {!isStaff && (item.rail === 'cash' || item.rail === 'card') && item.status === 'paid' && (

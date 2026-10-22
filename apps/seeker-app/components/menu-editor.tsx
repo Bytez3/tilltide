@@ -71,7 +71,7 @@ export function MenuEditor() {
                 {symbol}
                 {Number(item.price).toFixed(2)}
               </Text>
-              <Text style={[ui.muted, { color: colors.sea, fontFamily: fonts.semibold }]}>Edit</Text>
+              <Text style={[ui.muted, { color: colors.link, fontFamily: fonts.semibold }]}>Edit</Text>
             </View>
           </Pressable>
         ),

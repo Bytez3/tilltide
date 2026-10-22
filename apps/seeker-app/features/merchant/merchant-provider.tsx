@@ -16,6 +16,8 @@ interface MerchantContextValue {
   loading: boolean
   /** Sign In With Solana over MWA, then register the shop if it's new. */
   signInAndSetUp: (shopName: string) => Promise<void>
+  /** Points the takings at a new owner wallet; the till wallet signs to approve it. */
+  setOwnerWallet: (wallet: string) => Promise<Merchant>
   /** Saves settings and returns the shop as the server stored them. */
   update: (patch: Parameters<typeof api.updateShop>[0]) => Promise<Merchant>
   /** Replace the cached shop (e.g. after re-checking PayPal). */
@@ -110,6 +112,24 @@ export function MerchantProvider({ children }: PropsWithChildren) {
     return () => (sub.remove(), clearInterval(timer))
   }, [signedIn])
 
+  const approveOwnerWallet = useCallback(
+    async (wallet: string) => {
+      const { nonce, domain, statement } = await api.ownerWalletChallenge(wallet)
+      const signed = await signIn({ domain, statement, nonce })
+      return api.approveOwnerWallet(fromUint8Array(signed.signedMessage), fromUint8Array(signed.signature))
+    },
+    [signIn],
+  )
+
+  const setOwnerWallet = useCallback(
+    async (wallet: string) => {
+      const saved = await approveOwnerWallet(wallet)
+      setMerchant(saved)
+      return saved
+    },
+    [approveOwnerWallet],
+  )
+
   const signInAndSetUp = useCallback(
     async (shopName: string) => {
       signingIn.current = true
@@ -134,14 +154,14 @@ export function MerchantProvider({ children }: PropsWithChildren) {
         // Sandbox: preset the test owner wallet so sweeps work straight away.
         if (isTestWallet && AppConfig.sandbox) {
           const info = await api.sandbox.info().catch(() => null)
-          if (info) shop = await api.updateShop({ ownerWallet: info.owner })
+          if (info) shop = await approveOwnerWallet(info.owner)
         }
         setMerchant(shop)
       } finally {
         signingIn.current = false
       }
     },
-    [clearSession, isTestWallet, signIn],
+    [approveOwnerWallet, clearSession, isTestWallet, signIn],
   )
 
   const update = useCallback(async (patch: Parameters<typeof api.updateShop>[0]) => {
@@ -169,7 +189,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
 
   return (
     <MerchantContext.Provider
-      value={{ merchant, loading, signInAndSetUp, update, signOut, replace: setMerchant, pairStaff, isStaff: merchant?.role === 'staff', unreachable: unreachable && !merchant }}
+      value={{ merchant, loading, signInAndSetUp, setOwnerWallet, update, signOut, replace: setMerchant, pairStaff, isStaff: merchant?.role === 'staff', unreachable: unreachable && !merchant }}
     >
       {children}
     </MerchantContext.Provider>

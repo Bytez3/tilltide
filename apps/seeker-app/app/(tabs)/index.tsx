@@ -238,7 +238,7 @@ export default function ChargeScreen() {
               <Text style={ui.muted}>Customer scans this with their phone camera.</Text>
               {AppConfig.sandbox && (
                 <Text
-                  style={{ color: colors.sea, fontFamily: fonts.semibold }}
+                  style={{ color: colors.link, fontFamily: fonts.semibold }}
                   onPress={() => Linking.openURL(receiptUrl)}
                 >
                   Open receipt

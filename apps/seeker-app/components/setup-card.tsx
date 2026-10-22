@@ -42,7 +42,7 @@ export function SetupCard() {
         <Button title="Pair this device" onPress={submit} disabled={code.replace(/\D/g, '').length !== 8} loading={busy} />
         {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
         <Text
-          style={[ui.muted, { textAlign: 'center', marginTop: 4, color: colors.sea, fontFamily: fonts.semibold }]}
+          style={[ui.muted, { textAlign: 'center', marginTop: 4, color: colors.link, fontFamily: fonts.semibold }]}
           accessibilityRole="button"
           onPress={() => (setStaffMode(false), setError(null))}
         >
@@ -68,7 +68,7 @@ export function SetupCard() {
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
       {account && !isTestWallet && (
         <Text
-          style={[ui.muted, { textAlign: 'center', color: colors.sea, fontFamily: fonts.semibold }]}
+          style={[ui.muted, { textAlign: 'center', color: colors.link, fontFamily: fonts.semibold }]}
           accessibilityRole="button"
           onPress={() => (disconnect().catch(() => {}), setError(null))}
         >
@@ -76,7 +76,7 @@ export function SetupCard() {
         </Text>
       )}
       <Text
-        style={[ui.muted, { textAlign: 'center', marginTop: 4, color: colors.sea, fontFamily: fonts.semibold }]}
+        style={[ui.muted, { textAlign: 'center', marginTop: 4, color: colors.link, fontFamily: fonts.semibold }]}
         accessibilityRole="button"
         onPress={() => (setStaffMode(true), setError(null))}
       >

@@ -12,8 +12,9 @@ export async function getPaymentsForDay(merchant: MerchantRow, date: string): Pr
   return sql<PaymentRow[]>`
     select * from payments
     where merchant_id = ${merchant.id}
-      and created_at >= (${date}::date::timestamp at time zone ${merchant.timezone})
-      and created_at < ((${date}::date + 1)::timestamp at time zone ${merchant.timezone})
+      -- A sale belongs to the day it was paid (a late payment counts when the money arrived).
+      and coalesce(paid_at, created_at) >= (${date}::date::timestamp at time zone ${merchant.timezone})
+      and coalesce(paid_at, created_at) < ((${date}::date + 1)::timestamp at time zone ${merchant.timezone})
     order by created_at`
 }
 

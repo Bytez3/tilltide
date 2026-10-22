@@ -16,7 +16,7 @@ import { currencySymbol, shortAddress } from '@/lib/format'
 type IconName = keyof typeof Ionicons.glyphMap
 
 export default function SettingsScreen() {
-  const { merchant, update, signOut, replace, isStaff } = useMerchant()
+  const { merchant, update, setOwnerWallet, signOut, replace, isStaff } = useMerchant()
   const [staffLabel, setStaffLabel] = useState('')
   const [staffCode, setStaffCode] = useState<string | null>(null)
   const [staffMinutes, setStaffMinutes] = useState(15)
@@ -91,9 +91,11 @@ export default function SettingsScreen() {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closeTime.trim())) throw new Error('Closing time must look like 17:30')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
+      // A new owner wallet (where takings go) is approved by the till wallet, so it opens the wallet first.
+      if (ownerWallet && ownerWallet !== merchant!.ownerWallet) await setOwnerWallet(ownerWallet)
       const saved = await update({
         pointsPerUnit,
-        ownerWallet: ownerWallet || null,
+        ...(ownerWallet ? {} : { ownerWallet: null }),
         token,
         currency,
         pointValue: pointValue.trim(),
@@ -288,7 +290,7 @@ export default function SettingsScreen() {
               {paypalMessage && <Text style={ui.muted}>{paypalMessage}</Text>}
             </View>
           )}
-          <Field label="Prices in">
+          <Field label="Prices in" hint="Choose before your first sale: it can't change once you've taken money.">
             <Segmented options={['GBP', 'EUR', 'USD']} value={currency} onChange={setCurrency} />
           </Field>
           <Field
@@ -392,7 +394,7 @@ export default function SettingsScreen() {
           {staffCode && (
             <View style={{ backgroundColor: colors.bg, borderRadius: 12, padding: 14, alignItems: 'center', gap: 4 }}>
               <Text style={ui.label}>Pairing code</Text>
-              <Text style={[ui.money, { fontSize: 32, color: colors.sea, letterSpacing: 2 }]} selectable>
+              <Text style={[ui.money, { fontSize: 32, color: colors.link, letterSpacing: 2 }]} selectable>
                 {staffCode}
               </Text>
               <Text style={[ui.muted, { textAlign: 'center' }]}>
@@ -416,7 +418,7 @@ export default function SettingsScreen() {
             onChangeText={setLookup}
           />
           <Button title="Check balance" variant="secondary" onPress={checkPoints} disabled={!lookup.trim()} />
-          {points && <Text style={[ui.h2, { color: colors.sea }]}>{points}</Text>}
+          {points && <Text style={[ui.h2, { color: colors.link }]}>{points}</Text>}
         </Section>
 
         <Button title="Sign out" variant="secondary" onPress={signOut} />

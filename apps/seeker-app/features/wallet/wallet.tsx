@@ -9,13 +9,13 @@ import {
   signAndSendTransactionMessageWithSigners,
   type Blockhash,
 } from '@solana/kit'
-import { createSolanaDevnet, MobileWalletProvider, useMobileWallet } from '@wallet-ui/react-native-kit'
+import { createSolanaDevnet, createSolanaMainnet, MobileWalletProvider, useMobileWallet } from '@wallet-ui/react-native-kit'
 import { PropsWithChildren, useMemo } from 'react'
 import { AppConfig } from '@/constants/app-config'
 import { api } from '@/lib/api'
 import type { TilltideWallet } from './types'
 
-const cluster = createSolanaDevnet({ url: AppConfig.rpcUrl })
+const cluster = (AppConfig.cluster === 'mainnet' ? createSolanaMainnet : createSolanaDevnet)({ url: AppConfig.rpcUrl })
 
 export function WalletProvider({ children }: PropsWithChildren) {
   return (

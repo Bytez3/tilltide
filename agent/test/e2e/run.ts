@@ -194,6 +194,15 @@ async function main() {
           `Issued At: ${new Date(Date.now() - 3 * 86_400_000).toISOString()}`,
       )
     }
+    /** What the app does to change the owner wallet: the till wallet signs the challenge naming it. */
+    async function setOwnerWallet(signer: KeyPairSigner, token: string, wallet: string) {
+      const { body: ch } = await api('POST', '/shop/owner-wallet/challenge', { ownerWallet: wallet }, token)
+      const message = await siwsMessage(signer, ch.nonce, ch.domain, ch.statement)
+      return api('POST', '/shop/owner-wallet', {
+        signedMessage: Buffer.from(message).toString('base64'),
+        signature: Buffer.from(await signBytes(signer.keyPair.privateKey, message)).toString('base64'),
+      }, token)
+    }
     async function signIn(signer: KeyPairSigner): Promise<string> {
       const { body: n } = await api('POST', '/auth/nonce')
       const message = await siwsMessage(signer, n.nonce, n.domain, n.statement)
@@ -316,10 +325,30 @@ async function main() {
       assert.equal(r.body.token, 'PYUSD', 'PayPal first: new shops take PayPal USD by default')
       assert.equal(r.body.currency, 'GBP', 'UK shops price in pounds by default')
       // Most scenarios below run in USD so token amounts equal prices; the GBP scenario is near the end.
-      const p = await api('PATCH', '/shop', { ownerWallet: owner.address, pointsPerUnit: 1, token: 'USDC', currency: 'USD' }, tillToken)
-      assert.equal(p.body.ownerWallet, owner.address)
+      const p = await api('PATCH', '/shop', { pointsPerUnit: 1, token: 'USDC', currency: 'USD' }, tillToken)
+      assert.equal(p.status, 200)
       assert.equal((await api('PATCH', '/shop', { timezone: 'Mars/Olympus' }, tillToken)).status, 400)
-      assert.equal((await api('PATCH', '/shop', { ownerWallet: till.address }, tillToken)).status, 400)
+      // Where takings go can't be changed with just a session: the till wallet has to sign for it.
+      assert.equal((await api('PATCH', '/shop', { ownerWallet: owner.address }, tillToken)).status, 400)
+      assert.equal((await api('POST', '/shop/owner-wallet/challenge', { ownerWallet: till.address }, tillToken)).status, 400)
+      // A signature from another wallet, or for another owner wallet, is refused.
+      const { body: ch } = await api('POST', '/shop/owner-wallet/challenge', { ownerWallet: owner.address }, tillToken)
+      const byCustomer = await siwsMessage(customer, ch.nonce, ch.domain, ch.statement)
+      const forged = await api('POST', '/shop/owner-wallet', {
+        signedMessage: Buffer.from(byCustomer).toString('base64'),
+        signature: Buffer.from(await signBytes(customer.keyPair.privateKey, byCustomer)).toString('base64'),
+      }, tillToken)
+      assert.equal(forged.status, 400)
+      await api('POST', '/shop/owner-wallet/challenge', { ownerWallet: customer.address }, tillToken)
+      const oldWording = await siwsMessage(till, ch.nonce, ch.domain, ch.statement)
+      const stale = await api('POST', '/shop/owner-wallet', {
+        signedMessage: Buffer.from(oldWording).toString('base64'),
+        signature: Buffer.from(await signBytes(till.keyPair.privateKey, oldWording)).toString('base64'),
+      }, tillToken)
+      assert.equal(stale.status, 400, 'a signature for one wallet can not approve another')
+      const set = await setOwnerWallet(till, tillToken, owner.address)
+      assert.equal(set.status, 200, JSON.stringify(set.body))
+      assert.equal(set.body.ownerWallet, owner.address)
     })
 
     let firstPaymentId = ''
@@ -1022,7 +1051,7 @@ async function main() {
     await step('no sweep fee when the treasury is the shop\'s own owner wallet', async () => {
       const { proposeSweep } = await import('../../src/services/sweeps')
       const other = await signIn(owner)
-      await api('PATCH', '/shop', { ownerWallet: treasury.address }, other)
+      assert.equal((await setOwnerWallet(owner, other, treasury.address)).status, 200)
       const shop = (await sql<any[]>`select * from merchants where wallet = ${owner.address}`)[0]
       const sweep = await proposeSweep(shop, 1_000_000n, null)
       assert.equal(sweep.feeAmount, 0n)
@@ -1115,6 +1144,15 @@ async function main() {
       await api('PATCH', '/shop', { pointValue: '0.10' }, tillToken)
       const unknown = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: 'ZZZZZ-ZZZZZ' }, tillToken)
       assert.equal(unknown.status, 400)
+      // Someone who copied the code off the receipt can't spend the points from their own PayPal account:
+      // the order is never captured and the points go back to their owner.
+      const stolen = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code }, tillToken)
+      const stolenOrder = new URL(stolen.body.url).searchParams.get('token')!
+      paypal.approve(stolenOrder, 'STRANGER')
+      const refusedSale = await waitFor(tillToken, stolen.body.id, (p) => p.status === 'failed', 'stolen code refused')
+      assert.match(refusedSale.failureReason, /different PayPal account/)
+      assert.equal(paypal.order(stolenOrder).status, 'APPROVED', 'not captured')
+      assert.equal(await ledgerBalance(shopId, 'paypal:BUYER1'), before, 'points released')
       // Every point x 0.10 off a 10.00 bill (well under the 50% cap). The code is case and dash insensitive.
       const sale = await api('POST', '/shop/payments', { amount: '10', rail: 'paypal', loyaltyCode: code!.toLowerCase().replace('-', '') }, tillToken)
       assert.equal(sale.status, 201, JSON.stringify(sale.body))
@@ -1136,7 +1174,12 @@ async function main() {
     })
 
     await step('prices in pounds: wallet sales convert at the day\'s rate; PayPal charges in GBP', async () => {
-      await api('PATCH', '/shop', { currency: 'GBP', token: 'USDC' }, tillToken)
+      // A shop that has taken sales can't switch currency (totals would mix currencies)...
+      const refused = await api('PATCH', '/shop', { currency: 'GBP' }, tillToken)
+      assert.equal(refused.status, 400)
+      assert.match(refused.body.error, /currency can't change/)
+      // ...so for this scenario the test switches it directly, as for a new shop set up in pounds.
+      await sql`update merchants set currency = 'GBP', token_symbol = 'USDC' where wallet = ${till.address}`
       // £4.00 at £1 = $1.25 is 5.00 USDC, and the QR asks for exactly that.
       const sale = await api('POST', '/shop/payments', { amount: '4.00' }, tillToken)
       assert.equal(sale.status, 201, JSON.stringify(sale.body))
@@ -1158,7 +1201,7 @@ async function main() {
       assert.deepEqual(paypal.order(orderId).purchase_units[0].amount, { currency_code: 'GBP', value: '6.50' })
       assert.equal(paypal.order(orderId).purchase_units[0].payment_instruction.platform_fees[0].amount.currency_code, 'GBP')
       assert.equal((await api('POST', '/shop/payments', { amount: '4.005' }, tillToken)).status, 400, 'whole pence only')
-      await api('PATCH', '/shop', { currency: 'USD' }, tillToken)
+      await sql`update merchants set currency = 'USD' where wallet = ${till.address}`
     })
 
     await step('quick-sale items: the owner keeps a menu; baskets are priced by the server, not the till', async () => {
@@ -1301,6 +1344,17 @@ async function main() {
       const list = await api('GET', '/shop/reports', undefined, tillToken)
       assert.equal(list.body[0].date, made.body.date)
       assert.equal((await api('POST', '/shop/reports', { date: '2026-02-31' }, tillToken)).status, 400)
+
+      // A sale paid after the report was written (e.g. after closing time) is added to it.
+      const { runDueReports } = await import('../../src/services/reports')
+      const salesIn = (text: string) => Number(text.match(/from (\d+) sales/)?.[1])
+      const late = await api('POST', '/shop/payments', { amount: '2.00', rail: 'cash' }, tillToken)
+      assert.equal(late.body.status, 'paid')
+      await sql`update merchants set close_time = '00:00' where wallet = ${till.address}`
+      await runDueReports()
+      const rewritten = (await api('GET', '/shop/reports', undefined, tillToken)).body[0]
+      assert.equal(salesIn(rewritten.text), salesIn(made.body.text) + 1, 'late sale counted')
+      await sql`update merchants set close_time = '17:30' where wallet = ${till.address}`
 
       // A label someone typed as a spreadsheet formula.
       await api('POST', '/shop/payments', { amount: '1.00', label: '=HYPERLINK("http://evil","x")' }, tillToken)

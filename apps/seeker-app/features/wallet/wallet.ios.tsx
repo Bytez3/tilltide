@@ -36,8 +36,9 @@ import {
 } from './deeplink-protocol'
 import type { TilltideWallet } from './types'
 
-const CHAIN = 'solana:devnet'
-const CLUSTER = 'devnet'
+const CHAIN = AppConfig.chain
+// Phantom and Solflare name mainnet 'mainnet-beta'.
+const CLUSTER = AppConfig.cluster === 'mainnet' ? 'mainnet-beta' : 'devnet'
 const STORAGE_KEY = 'tilltide:ios-wallet'
 
 /** Where the wallet sends the owner back to; app/wallet-callback/[method].tsx returns them to where they were. */
@@ -135,7 +136,7 @@ export function WalletProvider({ children }: PropsWithChildren) {
               <Button key={w.name} title={w.name} variant="secondary" onPress={() => finish(w)} />
             ))}
             <Text style={ui.muted}>No wallet yet? Install Phantom or Solflare from the App Store, then come back.</Text>
-            <Text style={[ui.muted, { textAlign: 'center', color: colors.sea, fontFamily: fonts.semibold }]} accessibilityRole="button" onPress={() => finish(null)}>
+            <Text style={[ui.muted, { textAlign: 'center', color: colors.link, fontFamily: fonts.semibold }]} accessibilityRole="button" onPress={() => finish(null)}>
               Cancel
             </Text>
           </Pressable>

@@ -245,3 +245,8 @@ create table if not exists points_accounts (
   created_at timestamptz not null default now()
 );
 create index if not exists points_accounts_created_idx on points_accounts (created_at);
+
+-- Changing where takings go needs the till wallet's signature (a session alone isn't enough).
+alter table merchants add column if not exists owner_wallet_pending text;
+alter table merchants add column if not exists owner_wallet_nonce text;
+alter table merchants add column if not exists owner_wallet_nonce_at timestamptz;

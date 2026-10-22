@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { reserveAgentRequest } from './usage'
 import { alert } from '../alerts'
 import { config } from '../config'
 import { sql, type MerchantRow } from '../db'
@@ -63,6 +64,8 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
 async function narrativeFor(merchant: MerchantRow, text: string, summary: Summary): Promise<string | null> {
   // Nothing to say on a day with no sales, and every shop gets a report: skip the call, and its cost.
   if (!process.env.ANTHROPIC_API_KEY || summary.paidCount === 0) return null
+  // Counts against the assistant's daily caps, so rewrites can't run up the bill.
+  if (!(await reserveAgentRequest(merchant).then(() => true, () => false))) return null
   try {
     const client = new Anthropic({ timeout: 60_000, maxRetries: 1 })
     const isHaiku = config.agent.model.startsWith('claude-haiku')
@@ -98,11 +101,13 @@ export async function writeDailyReport(merchant: MerchantRow, date: string): Pro
   if (unexplained > 0) {
     void alert(`unexplained:${merchant.id}:${date}`, `${merchant.name}: ${unexplained} transfer(s) in the till on ${date} that Tilltide didn't take`)
   }
-  // One Claude note per shop per day: a rewrite (a void, or the owner refreshing) keeps the note already
-  // written, so repeated rewrites can't run up the bill outside the assistant's daily caps.
-  const [previous] = await sql<{ narrative: string | null }[]>`
-    select narrative from daily_reports where merchant_id = ${merchant.id} and day = ${date}`
-  const narrative = previous?.narrative ?? (previous ? null : await narrativeFor(merchant, text, summary))
+  // A rewrite whose facts haven't changed keeps its note.
+  const [previous] = await sql<{ text: string; narrative: string | null }[]>`
+    select text, narrative from daily_reports where merchant_id = ${merchant.id} and day = ${date}`
+  const narrative =
+    previous && previous.text === text
+      ? previous.narrative
+      : await narrativeFor(merchant, text, summary)
   const stored = { summary, reconciliation }
   const json = JSON.stringify(stored, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
   const [row] = await sql<{ createdAt: Date }[]>`
@@ -140,14 +145,26 @@ export async function runDueReports() {
     const yesterday = dayBefore(today)
     const due = localTime(merchant.timezone) >= merchant.closeTime ? [yesterday, today] : [yesterday]
     for (const day of due) {
-      const [done] = await sql`select 1 from daily_reports where merchant_id = ${merchant.id} and day = ${day}`
-      if (done) continue
-      // Only shops that traded that day get a catch-up report.
-      if (day !== today) {
+      const from = sql`(${day}::date::timestamp at time zone ${merchant.timezone})`
+      const to = sql`((${day}::date + 1)::timestamp at time zone ${merchant.timezone})`
+      const [done] = await sql<{ writtenAt: Date }[]>`
+        select created_at as written_at from daily_reports where merchant_id = ${merchant.id} and day = ${day}`
+      if (done) {
+        // Already written: rewrite it if money landed for that day since, e.g. a sale after closing time,
+        // a wallet payment that arrived late, a PayPal capture released from review, or a refund.
+        const [changed] = await sql`
+          select 1 from payments where merchant_id = ${merchant.id} and status = 'paid'
+            and coalesce(paid_at, created_at) >= ${from} and coalesce(paid_at, created_at) < ${to} and paid_at > ${done.writtenAt}
+          union all
+          select 1 from refunds where merchant_id = ${merchant.id} and status in ('pending', 'completed')
+            and approved_at >= ${from} and approved_at < ${to} and approved_at > ${done.writtenAt}
+          limit 1`
+        if (!changed) continue
+      } else if (day !== today) {
+        // Only shops that traded that day get a catch-up report.
         const [traded] = await sql`
           select 1 from payments where merchant_id = ${merchant.id}
-            and created_at >= (${day}::date::timestamp at time zone ${merchant.timezone})
-            and created_at < ((${day}::date + 1)::timestamp at time zone ${merchant.timezone}) limit 1`
+            and coalesce(paid_at, created_at) >= ${from} and coalesce(paid_at, created_at) < ${to} limit 1`
         if (!traded) continue
       }
       await writeDailyReport(merchant, day).catch((err) => console.error(`End-of-day report for ${merchant.id} ${day} failed`, err))

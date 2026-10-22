@@ -145,6 +145,18 @@ export async function checkPayPalPayment(payment: PaymentRow): Promise<boolean> 
   if (!paypal || !payment.paypalOrderId) return false
   if (payment.status !== 'pending' && payment.status !== 'expired') return false
   let order = await paypal.getOrder(payment.paypalOrderId)
+  // Points from a loyalty code are spent only by the PayPal account that earned them. The code is on the
+  // customer's receipt, so someone who saw it could otherwise spend those points from their own account.
+  if (order.status === 'APPROVED' && payment.status === 'pending' && payment.pointsRedeemed > 0n && payment.loyaltyKey) {
+    const payer = order.payer?.payer_id ? `paypal:${order.payer.payer_id}` : null
+    if (payer !== payment.loyaltyKey) {
+      // Failing the sale releases the points it held; the order is never captured, so nothing is charged.
+      await sql`
+        update payments set status = 'failed', failure_reason = 'Those loyalty points belong to a different PayPal account'
+        where id = ${payment.id} and status = 'pending'`
+      return true
+    }
+  }
   // An expired request is never captured; but a capture that completed just before expiry still counts.
   if (order.status === 'APPROVED' && payment.status === 'pending') {
     try {

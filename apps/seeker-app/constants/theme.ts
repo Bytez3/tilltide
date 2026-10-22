@@ -9,6 +9,8 @@ const light = {
   line: '#E2DDD4',
   sea: '#0E6E6B',
   seaInk: '#FFFFFF',
+  /** Teal text and links (on cards and the page). */
+  link: '#0E6E6B',
   seaLight: '#7FC4BC',
   /** Harbour header band behind the big numbers, and the text on it. */
   band: '#0E6E6B',
@@ -30,8 +32,9 @@ const dark: typeof light = {
   muted: '#9BA8A5',
   placeholder: '#62716E',
   line: '#26342F',
-  sea: '#1F8A84',
+  sea: '#167A74',
   seaInk: '#FFFFFF',
+  link: '#4FB3AA',
   seaLight: '#4E9E97',
   band: '#123F3C',
   bandInk: '#EEF2F1',

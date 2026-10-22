@@ -101,7 +101,7 @@ export default function AgentScreen() {
             <View key={i} style={{ alignSelf: 'flex-start', maxWidth: '92%', gap: 6 }}>
               <View style={[ui.row, { gap: 6 }]}>
                 <Ionicons name="sparkles" size={13} color={colors.sea} />
-                <Text style={[ui.label, { color: colors.sea }]}>Tilltide</Text>
+                <Text style={[ui.label, { color: colors.link }]}>Tilltide</Text>
               </View>
               <View style={[ui.card, { borderRadius: 18, borderTopLeftRadius: 6 }]}>
                 <Text style={ui.body}>{turn.content}</Text>

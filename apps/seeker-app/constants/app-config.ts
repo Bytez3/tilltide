@@ -18,9 +18,14 @@ export class AppConfig {
     uri: process.env.EXPO_PUBLIC_APP_URI ?? 'https://tilltide.bytez3.com',
     icon: 'favicon.png',
   }
+  /** Must match the API's SOLANA_CLUSTER: wallets sign for this chain and the server checks it. */
+  static cluster: 'devnet' | 'mainnet' = process.env.EXPO_PUBLIC_SOLANA_CLUSTER === 'mainnet' ? 'mainnet' : 'devnet'
+  static chain = `solana:${AppConfig.cluster}` as const
   // Devnet until M4. The browser sandbox points this at a local validator. The phone app itself no longer
   // calls an RPC (blockhashes come from the Tilltide server); this is only the wallet adapter's cluster.
-  static rpcUrl = publicOnly(process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com')
+  static rpcUrl = publicOnly(
+    process.env.EXPO_PUBLIC_SOLANA_RPC_URL ?? (AppConfig.cluster === 'mainnet' ? 'https://api.mainnet-beta.solana.com' : 'https://api.devnet.solana.com'),
+  )
   static sandbox = process.env.EXPO_PUBLIC_SANDBOX === '1'
   // The live API. For local development set EXPO_PUBLIC_API_URL (10.0.2.2 reaches your computer from the emulator).
   static apiUrl = process.env.EXPO_PUBLIC_API_URL ?? 'https://tilltide.bytez3.com'

@@ -28,7 +28,7 @@ export default function TabsLayout() {
     <Tabs
       key={merchant?.id ?? 'signed-out'}
       screenOptions={{
-        tabBarActiveTintColor: colors.sea,
+        tabBarActiveTintColor: colors.link,
         tabBarInactiveTintColor: colors.muted,
         // The default bar squeezes the label box below its line height, which clips descenders (g, y).
         // Signed out, the phone shows only the welcome screen: no tabs, no header.

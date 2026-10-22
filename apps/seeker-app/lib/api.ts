@@ -218,6 +218,9 @@ export const api = {
   connectPayPal: () => request<{ url: string }>('/shop/paypal/connect', post()),
   refreshPayPal: () => request<Merchant>('/shop/paypal/refresh', post()),
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
+  ownerWalletChallenge: (ownerWallet: string) =>
+    request<{ nonce: string; domain: string; statement: string }>('/shop/owner-wallet/challenge', post({ ownerWallet })),
+  approveOwnerWallet: (signedMessage: string, signature: string) => request<Merchant>('/shop/owner-wallet', post({ signedMessage, signature })),
   cancelPayment: (id: string) => request<Payment>(`/shop/payments/${id}/cancel`, post({})),
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),

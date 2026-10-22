@@ -41,7 +41,8 @@ export async function exportCsv(merchant: MerchantRow, from: string, to: string)
   const start = sql`(${from}::date::timestamp at time zone ${merchant.timezone})`
   const end = sql`((${to}::date + 1)::timestamp at time zone ${merchant.timezone})`
   const payments = await sql<PaymentRow[]>`
-    select * from payments where merchant_id = ${merchant.id} and created_at >= ${start} and created_at < ${end} order by created_at`
+    select * from payments where merchant_id = ${merchant.id}
+      and coalesce(paid_at, created_at) >= ${start} and coalesce(paid_at, created_at) < ${end} order by coalesce(paid_at, created_at)`
   const refunds = await sql<(RefundRow & { paymentLabel: string | null })[]>`
     select r.*, p.label as payment_label from refunds r join payments p on p.id = r.payment_id
     where r.merchant_id = ${merchant.id} and r.status in ('pending', 'completed')

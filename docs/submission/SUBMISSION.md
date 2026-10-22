@@ -73,6 +73,8 @@ PayPal is the backbone of the product, not a payment button:
 
 - **No keys in the app.** Owners sign in with their wallet (Sign In With Solana). Every shop route is scoped to the signed-in wallet.
 - **The agent can't move money.** Refunds need a wallet signature over the refund's exact wording, plus a single-use challenge. Transfers to the owner are locked until the chain shows whether a signed one landed.
+- **A stolen session can't redirect the money.** Changing where takings go needs the till wallet to sign the new address, the same way refunds do.
+- **A loyalty code is only good for its owner.** Points on a PayPal bill are spent only if the PayPal account paying is the one that earned them, so a code seen on someone's receipt is useless to anyone else.
 - **Staff devices are limited by the server, not just hidden in the app.** They pair with a one-time code, take payments only, and the server refuses everything else by default.
 - **Payments are verified from what the transaction actually did**, not from what the server offered. A customer can't game a points discount.
 
