@@ -3,8 +3,10 @@ import { join } from 'node:path'
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
+import { secureHeaders } from 'hono/secure-headers'
 import { app } from './app'
 import { config } from './config'
+import { requireOrigin } from './rate-limit'
 import { startWatcher } from './services/watcher'
 import { checkProductionConfig } from './production'
 
@@ -25,9 +27,21 @@ const webDir = process.env.WEB_DIR
 if (webDir && existsSync(join(webDir, 'index.html'))) {
   const web = new Hono()
   const strip = (path: string) => path.replace(/^\/app/, '') || '/'
+  // The same origin lock and headers as the API (no framing of the owner's till, for one).
+  web.use('/app/*', requireOrigin(config.originSecret), secureHeaders())
   web.get('/app', (c) => c.redirect('/app/'))
-  web.use('/app/*', serveStatic({ root: webDir, rewriteRequestPath: strip }))
-  web.get('/app/*', serveStatic({ root: webDir, path: 'index.html' }))
+  web.use(
+    '/app/*',
+    serveStatic({
+      root: webDir,
+      rewriteRequestPath: strip,
+      // Bundles have a hash in their name, so they can be kept; index.html must be fresh after a deploy.
+      onFound: (path, c) => c.header('cache-control', path.includes('/_expo/') ? 'public, max-age=31536000, immutable' : 'no-cache'),
+    }),
+  )
+  // A missing file is a 404, not the app: an old bundle name mustn't come back as HTML.
+  web.get('/app/*', (c, next) => (/\.[a-z0-9]+$/i.test(c.req.path) ? c.notFound() : next()))
+  web.get('/app/*', serveStatic({ root: webDir, path: 'index.html', onFound: (_, c) => c.header('cache-control', 'no-cache') }))
   web.route('/', app)
   root = web
 }

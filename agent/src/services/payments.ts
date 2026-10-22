@@ -15,6 +15,7 @@ import { LEDGER_DECIMALS, sql, type MerchantRow, type PaymentRow, type SaleItem 
 import { approvalUrl, completedCapture, createPayPalClient, PayPalError, type PayPalClient } from '../paypal'
 import { getPointsAuthority, rpc, sendAndConfirmWire, signTransaction } from '../solana'
 import { ledgerBalance, payerForCode, planPayPalRedemption } from './paypal-loyalty'
+import { shopPointsBalance } from './redeem'
 import { isSeekerCustomer } from './seeker'
 import { toTokenUnits, usdPerUnit } from '../fx'
 import { paypalPayee } from './paypal-onboarding'
@@ -196,11 +197,24 @@ export async function markPaymentPaid(
   result: Extract<VerifiedPayment, { ok: true }>,
   redemption: { pointsRedeemed: bigint; discount: bigint } = { pointsRedeemed: 0n, discount: 0n },
 ) {
-  const rows = await sql`
+  const mark = (tx: typeof sql) => tx`
     update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now(),
       failure_reason = null, points_redeemed = ${redemption.pointsRedeemed.toString()}, discount = ${redemption.discount.toString()}
     where id = ${payment.id} and status in ('pending', 'expired', 'failed') returning id`
-  return rows.length > 0
+  if (redemption.pointsRedeemed === 0n || !result.payer) return (await mark(sql)).length > 0
+  // A points sale: check the customer's points here again under a lock, so two sales verified at the same
+  // moment (watcher and till) can't both spend the same points.
+  return sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${`${payment.merchantId}:${result.payer}`}))`
+    const allowed = await shopPointsBalance(payment.merchantId, result.payer!, payment.id, tx as never)
+    if (redemption.pointsRedeemed > allowed) {
+      await tx`
+        update payments set failure_reason = 'Those points were spent on another sale at the same time'
+        where id = ${payment.id} and status = 'pending'`
+      return false
+    }
+    return (await mark(tx as never)).length > 0
+  })
 }
 
 /** Something arrived with the reference but isn't a valid payment. Stays pending (the customer can still pay) until expiry. */
@@ -295,18 +309,21 @@ export async function issuePointsForPayment(paymentId: string): Promise<IssuePoi
   if (!authorityPromise || !config.pointsMint) return { issued: false, reason: 'Points mint is not configured' }
   const authority = await authorityPromise
 
-  // Opening a customer's points account costs Tilltide rent. Guard it so it can't be farmed.
-  const refusal = await pointsAccountRefusal(merchant!, payment)
-  if (refusal) {
-    await sql`update payments set points = 0, points_status = 'none' where id = ${payment.id} and points_status is null`
-    return { issued: false, reason: refusal }
-  }
-
-  // Claim the row so two workers can't mint for the same payment.
+  // Claim the row first, so two workers can't mint for the same payment, and a second worker can't
+  // mistake the first one's half-done account opening for a closed account.
   const claimed = await sql`
     update payments set points = ${points.toString()}, points_status = 'sending', points_claimed_at = now()
     where id = ${payment.id} and points_status is null returning id`
   if (claimed.length === 0) return { issued: false, reason: 'Points are already being issued' }
+
+  // Opening a customer's points account costs Tilltide rent. Guard it so it can't be farmed.
+  const refusal = await pointsAccountRefusal(merchant!, payment)
+  if (refusal) {
+    await sql`
+      update payments set points = 0, points_status = 'none', points_claimed_at = null
+      where id = ${payment.id} and points_status = 'sending' and points_signature is null`
+    return { issued: false, reason: refusal }
+  }
 
   const instructions = await getIssuePointsInstructions({
     payer: authority,
@@ -343,8 +360,13 @@ async function pointsAccountRefusal(merchant: MerchantRow, payment: PaymentRow):
   const [ata] = await findAssociatedTokenPda({ owner: payer, mint: config.pointsMint!, tokenProgram: TOKEN_PROGRAM_ADDRESS })
   const existing = await rpc.getAccountInfo(ata, { commitment: 'confirmed', encoding: 'base64' }).send()
   if (existing.value) return null
-  const [opened] = await sql`select 1 from points_accounts where wallet = ${payer}`
-  if (opened) return 'This wallet closed its points account; Tilltide only opens one once'
+  // Closed only if points were really minted to it before. A first mint that never landed (and was
+  // retried) never opened anything, so that wallet isn't refused.
+  const [mintedBefore] = await sql`
+    select 1 from points_accounts pa
+    where pa.wallet = ${payer}
+      and exists (select 1 from payments p where p.payer = ${payer} and p.rail = 'solana' and p.points_status = 'issued' and p.points > 0)`
+  if (mintedBefore) return 'This wallet closed its points account; Tilltide only opens one once'
   if (payment.amount - payment.discount < MIN_SALE_FOR_NEW_POINTS_ACCOUNT) return 'A first points sale must be at least 1.00'
   const [counts] = await sql<{ shop: number; all: number }[]>`
     select count(*) filter (where merchant_id = ${merchant.id})::int as shop, count(*)::int as all

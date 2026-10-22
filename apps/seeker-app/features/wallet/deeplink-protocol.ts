@@ -45,11 +45,16 @@ export function newEncryptionKeypair() {
   return nacl.box.keyPair()
 }
 
-export class WalletRejected extends Error {}
+export class WalletRejected extends Error {
+  /** The wallet's error code, e.g. '4001' when the owner said no. */
+  constructor(message: string, readonly code?: string) {
+    super(message)
+  }
+}
 
 function check(params: URLSearchParams) {
   const code = params.get('errorCode')
-  if (code) throw new WalletRejected(params.get('errorMessage') || `The wallet refused (error ${code})`)
+  if (code) throw new WalletRejected(params.get('errorMessage') || `The wallet refused (error ${code})`, code)
 }
 
 export function connectUrl(wallet: DeeplinkWallet, opts: { dappPublicKey: Uint8Array; appUrl: string; redirect: string; cluster: string }) {

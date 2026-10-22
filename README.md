@@ -4,7 +4,7 @@ A PayPal-first till and AI back office for small shops, with PayPal USD on Solan
 
 *Till* — the shop counter. *Tide* — payments flowing in and out on their own, from the Cornish coast to anywhere.
 
-A shop runs its till on a Solana Seeker or any Android phone.
+A shop runs its till on a Solana Seeker, any Android phone, an iPhone, or in a phone's browser.
 - **Paying:** most customers pay with PayPal or a card by scanning a PayPal checkout QR. The money goes straight to the shop's own PayPal account. Customers with a Solana wallet pay in PYUSD (PayPal's stablecoin) or USDC instead.
 - **Cash and card reader:** sales taken in cash or on the shop's existing card reader are recorded on the till (with change worked out for cash), so takings, the end-of-day report, the agent and the bookkeeper's CSV cover every sale. No money moves through Tilltide for these, so there's no fee. The owner can void one recorded by mistake.
 - **Menu:** the owner sets up items (Pasty £4.50, Coffee £3.00) and the till taps them into a basket, with the keypad for anything else. The server prices every basket from the shop's own menu, so a till can't change a price, and each sale keeps a copy of what was sold at what price. Best sellers appear in the daily summary and end-of-day report, and the agent can answer "what sold best today?".
@@ -83,7 +83,7 @@ Builds run on [EAS](https://expo.dev/eas) from `apps/seeker-app` (`eas.json` has
 
 ## Run it locally
 
-Needs Node 22, pnpm, Docker, Android Studio (emulator or a device), and an MWA wallet on the device (e.g. Phantom or Solflare, set to devnet).
+Needs Node 22, pnpm and Docker. For the Android app: Android Studio (emulator or a device) and an MWA wallet on the device (e.g. Phantom or Solflare, set to devnet). For the iPhone app: an EAS build (`eas build -p ios --profile test-ios`) and Phantom or Solflare on the phone.
 
 ```bash
 pnpm install
@@ -105,12 +105,12 @@ pnpm --filter @tilltide/seeker-app android
 Get devnet USDC for a test customer wallet from [faucet.circle.com](https://faucet.circle.com) and devnet SOL from [faucet.solana.com](https://faucet.solana.com).
 
 ```bash
-pnpm test        # kit and PayPal client unit tests
+pnpm test        # unit tests: kit, agent services and the PayPal client, and the iPhone wallet protocol
 pnpm typecheck   # kit, agent and app
 pnpm --filter @tilltide/agent e2e   # full end-to-end run on a local Solana validator
 ```
 
-The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (mint authority swapped to a test key), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 38 scenarios:
+The end-to-end suite starts `solana-test-validator` with copies of the devnet USDC and PYUSD mints (saved in `agent/test/support/mints`, mint authority swapped to a test key, so no devnet is needed), a stand-in PayPal Orders API, and a fresh Postgres database. It then drives the real API through 40 scenarios:
 - Sign-in: forged signatures, replayed nonces and the wrong domain are all rejected.
 - Paying: USDC and PYUSD (Token-2022) payments, including a dust transfer on the reference, underpayment, payment after expiry, and expiry itself.
 - Points: never minted twice, even after an interrupted mint.
@@ -132,7 +132,7 @@ docker build -f agent/Dockerfile -t tilltide-agent .
 
 ## Live
 
-API (devnet): https://tilltide.bytez3.com (also reachable at https://api-production-83900.up.railway.app). Its home page (`/`) is the public landing page for shops and judges; `/r/<id>` is a customer receipt. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
+API (devnet): https://tilltide.bytez3.com, with the owner web app at https://tilltide.bytez3.com/app. Its home page (`/`) is the public landing page for shops and judges; `/r/<id>` is a customer receipt. It's on Railway, project `tilltide` in the "My Projects" workspace, with Postgres alongside. Pushes to `main` deploy automatically. The app points here by default.
 
 ## Running it for real
 
@@ -174,4 +174,4 @@ Planned: a Pro plan (more agent questions, staff logins, exports), and PayPal pl
 
 ## Status
 
-Built: M1–M3 plus the PayPal rail and wallet sign-in. Verified by the end-to-end suite on a local validator, and payment verification also checked against real devnet USDC transfers. Not yet run: a device build with a live wallet, the agent against the live Claude API (needs `ANTHROPIC_API_KEY`), and PayPal's real sandbox (needs sandbox keys).
+Built: M1–M3 plus the PayPal rail and wallet sign-in. Verified by the end-to-end suite on a local validator, and payment verification also checked against real devnet USDC transfers. Live on devnet at tilltide.bytez3.com, with the judge demo at demo.tilltide.bytez3.com. Not yet run: Android and iPhone builds on real phones with a live wallet, the agent against the live Claude API (needs `ANTHROPIC_API_KEY`), and PayPal's real sandbox (needs sandbox keys).

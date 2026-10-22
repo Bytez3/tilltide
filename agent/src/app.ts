@@ -287,6 +287,7 @@ const STAFF_ALLOWED: [string, RegExp][] = [
   ['GET', /^\/shop\/?$/],
   ['POST', /^\/shop\/payments$/],
   ['GET', /^\/shop\/payments(\/[^/]+)?$/],
+  ['POST', /^\/shop\/payments\/[^/]+\/cancel$/],
   ['GET', /^\/shop\/summary$/],
   ['GET', /^\/shop\/items$/],
   ['POST', /^\/shop\/logout$/],
@@ -578,6 +579,25 @@ shop.get('/payments/:id', async (c) => {
     (payment.rail === 'solana' && payment.status !== 'paid' && Date.now() - payment.createdAt.getTime() < 86_400_000)
   if (recheck && (await checkPayment(payment, merchant).catch(() => false))) payment = (await getPayment(id))!
   return c.json(serializePayment(payment))
+})
+
+/**
+ * The till cancels an open request (the Cancel button). Closes it like an expiry: a PayPal order is then
+ * never captured, so a customer still holding the QR can't be charged. A wallet payment can't be stopped
+ * once sent; if one arrives anyway it's still recorded, so the money is never lost.
+ */
+shop.post('/payments/:id/cancel', async (c) => {
+  const merchant = await myShop(c)
+  const id = c.req.param('id')
+  const [found] = isUuid(id) ? await sql<PaymentRow[]>`select * from payments where id = ${id} and merchant_id = ${merchant.id}` : []
+  if (!found) throw new HTTPException(404, { message: 'Payment not found' })
+  // One last look, so a payment that landed a moment ago is reported rather than cancelled.
+  if (found.status === 'pending') await checkPayment(found, merchant).catch(() => false)
+  await sql`
+    update payments set status = 'expired', failure_reason = 'Cancelled at the till'
+    where id = ${id} and status = 'pending' and rail in ('solana', 'paypal')
+      and not (rail = 'paypal' and paypal_capture_id is not null)`
+  return c.json(serializePayment((await getPayment(id))!))
 })
 
 shop.get('/summary', async (c) => {

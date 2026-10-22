@@ -36,7 +36,7 @@ The submission write-up is in [`submission/SUBMISSION.md`](submission/SUBMISSION
 - [ ] Make the GitHub repo public (the rules require a public repo with a visible licence; MIT is already there)
 - [ ] PayPal sandbox app: set `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` on the API
 - [ ] Partner features in sandbox: set `PAYPAL_PARTNER_MERCHANT_ID` and `PAYPAL_BN_CODE` (from your PayPal developer or partner contact). Without them, shops can name a PayPal email instead.
-- [ ] Get Railway deploying again (billing), and set `PUBLIC_URL` so PayPal's return link reaches the API
+- [x] API live at https://tilltide.bytez3.com and judge demo at https://demo.tilltide.bytez3.com (Railway services `api` and `demo`)
 - [ ] Run one real sandbox sale and refund with a sandbox buyer account
 - [ ] Set `ANTHROPIC_API_KEY` and try the agent questions from the demo script
 - [ ] Record the video (under 3 minutes) from `submission/DEMO-SCRIPT.md`, upload it publicly to YouTube

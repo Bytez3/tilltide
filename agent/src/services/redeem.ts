@@ -33,8 +33,8 @@ async function pointsBalance(owner: Address): Promise<bigint> {
  * one points token, so a shop honours only the points it issued itself: another shop (with its own,
  * possibly generous, earn rate) can never hand out discounts here.
  */
-export async function shopPointsBalance(merchantId: string, wallet: string, excludePaymentId?: string): Promise<bigint> {
-  const [row] = await sql<{ earned: bigint; spent: bigint }[]>`
+export async function shopPointsBalance(merchantId: string, wallet: string, excludePaymentId?: string, tx = sql): Promise<bigint> {
+  const [row] = await tx<{ earned: bigint; spent: bigint }[]>`
     select coalesce(sum(case when points_status = 'issued' then points else 0 end), 0)::bigint as earned,
            coalesce(sum(points_redeemed), 0)::bigint as spent
     from payments

@@ -61,7 +61,8 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
 
 /** A short, friendly note from Claude on top of the facts. Optional: skipped without an API key. */
 async function narrativeFor(merchant: MerchantRow, text: string, summary: Summary): Promise<string | null> {
-  if (!process.env.ANTHROPIC_API_KEY) return null
+  // Nothing to say on a day with no sales, and every shop gets a report: skip the call, and its cost.
+  if (!process.env.ANTHROPIC_API_KEY || summary.paidCount === 0) return null
   try {
     const client = new Anthropic({ timeout: 60_000, maxRetries: 1 })
     const isHaiku = config.agent.model.startsWith('claude-haiku')
@@ -97,7 +98,11 @@ export async function writeDailyReport(merchant: MerchantRow, date: string): Pro
   if (unexplained > 0) {
     void alert(`unexplained:${merchant.id}:${date}`, `${merchant.name}: ${unexplained} transfer(s) in the till on ${date} that Tilltide didn't take`)
   }
-  const narrative = await narrativeFor(merchant, text, summary)
+  // One Claude note per shop per day: a rewrite (a void, or the owner refreshing) keeps the note already
+  // written, so repeated rewrites can't run up the bill outside the assistant's daily caps.
+  const [previous] = await sql<{ narrative: string | null }[]>`
+    select narrative from daily_reports where merchant_id = ${merchant.id} and day = ${date}`
+  const narrative = previous?.narrative ?? (previous ? null : await narrativeFor(merchant, text, summary))
   const stored = { summary, reconciliation }
   const json = JSON.stringify(stored, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
   const [row] = await sql<{ createdAt: Date }[]>`

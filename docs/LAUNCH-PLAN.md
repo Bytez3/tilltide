@@ -17,8 +17,8 @@ Each task is marked **Steven** (accounts, keys, approvals, people) or **Claude**
 | Deploy; switch `AUTH_DOMAIN`/`PUBLIC_URL`/app identity to `tilltide.bytez3.com`; set `ORIGIN_SECRET` | Claude | After DNS verifies |
 | Real PayPal sandbox sale + refund; agent questions live | Claude | |
 | Real Android phone with Phantom or Solflare: sign in, PayPal sale, PYUSD sale, sweep | Together | The biggest remaining unknown |
-| CI on GitHub (typecheck, unit tests, e2e) | Claude | |
-| Alerts for anything that needs attention | Claude | |
+| CI on GitHub (typecheck, unit tests, e2e) | Claude | Done |
+| Alerts for anything that needs attention | Claude | Done (`ALERT_WEBHOOK_URL`) |
 
 ## Week 2 (to 12 Nov): submit to PayPal
 

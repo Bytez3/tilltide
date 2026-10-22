@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { FlatList, Linking, Pressable, RefreshControl, Text, View } from 'react-native'
+import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
 import { SetupCard } from '@/components/setup-card'
 import { SweepCard } from '@/components/sweep-card'
@@ -9,6 +9,7 @@ import { Button, Input } from '@/components/ui'
 import { colors, fonts, Tint, tints, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Payment, Refund, Sweep } from '@/lib/api'
+import { openLinkAfterRequest } from '@/lib/open-link'
 import { currencySymbol, formatDay, formatMoney, shortAddress } from '@/lib/format'
 
 const STATUS_COLOUR: Record<Payment['status'], string> = {
@@ -36,6 +37,8 @@ export default function ActivityScreen() {
   const [sweepAmount, setSweepAmount] = useState<string | null>(null)
   const [sweep, setSweep] = useState<Sweep | null>(null)
   const [refund, setRefund] = useState<Refund | null>(null)
+  // The pull-to-refresh spinner is for a pull by the owner, not the automatic refresh every few seconds.
+  const [pulled, setPulled] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reports = useQuery({
     queryKey: ['reports', merchant?.id],
@@ -93,6 +96,10 @@ export default function ActivityScreen() {
 
   async function startRefund(payment: Payment) {
     if (busy) return
+    // One refund at a time, so a second one can't replace the first's card while it's being approved.
+    if (refund && (refund.status === 'proposed' || refund.status === 'processing')) {
+      return setError('Finish or cancel the refund that is open first')
+    }
     setError(null)
     setBusy(true)
     try {
@@ -143,15 +150,15 @@ export default function ActivityScreen() {
       // "This month" in the shop's own timezone, not UTC.
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: merchant!.timezone }).format(new Date())
       const { url } = await api.exportLink(`${today.slice(0, 8)}01`, today)
-      await Linking.openURL(url)
+      await openLinkAfterRequest(url)
     } catch (e) {
       setError(message(e))
     }
   }
 
   const refresh = () => {
-    payments.refetch()
-    summary.refetch()
+    setPulled(true)
+    Promise.all([payments.refetch(), summary.refetch()]).finally(() => setPulled(false))
   }
 
   const s = summary.data?.summary
@@ -161,7 +168,7 @@ export default function ActivityScreen() {
       contentContainerStyle={ui.content}
       data={payments.data ?? []}
       keyExtractor={(p) => p.id}
-      refreshControl={<RefreshControl refreshing={payments.isFetching} onRefresh={refresh} />}
+      refreshControl={<RefreshControl refreshing={pulled} onRefresh={refresh} />}
       ListHeaderComponent={
         <View style={{ gap: 12 }}>
           {/* Anything waiting on the owner comes first. */}

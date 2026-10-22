@@ -10,7 +10,7 @@ export function SetupCard() {
   const { signInAndSetUp, pairStaff } = useMerchant()
   const [staffMode, setStaffMode] = useState(false)
   const [code, setCode] = useState('')
-  const { isTestWallet } = useWallet()
+  const { isTestWallet, account, disconnect } = useWallet()
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,6 +66,15 @@ export function SetupCard() {
       <Input placeholder="Shop name (new shops only)" value={name} onChangeText={setName} maxLength={80} />
       <Button title="Sign in with wallet" onPress={submit} loading={busy} />
       {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
+      {account && !isTestWallet && (
+        <Text
+          style={[ui.muted, { textAlign: 'center', color: colors.sea, fontFamily: fonts.semibold }]}
+          accessibilityRole="button"
+          onPress={() => (disconnect().catch(() => {}), setError(null))}
+        >
+          Use a different wallet or account
+        </Text>
+      )}
       <Text
         style={[ui.muted, { textAlign: 'center', marginTop: 4, color: colors.sea, fontFamily: fonts.semibold }]}
         accessibilityRole="button"

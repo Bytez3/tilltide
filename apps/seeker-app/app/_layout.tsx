@@ -53,6 +53,8 @@ export default function RootLayout() {
         <OfflineBanner />
         <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          {/* Returning from an iPhone wallet: passes straight back, so no header or animation. */}
+          <Stack.Screen name="wallet-callback/[method]" options={{ headerShown: false, animation: 'none' }} />
         </Stack>
         <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
       </AppProviders>

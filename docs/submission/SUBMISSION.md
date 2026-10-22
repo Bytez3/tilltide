@@ -59,10 +59,10 @@ PayPal is the backbone of the product, not a payment button:
 
 ## How we built it
 
-- **App:** Expo / React Native for Android (Solana Seeker first), with Solana Mobile Wallet Adapter for sign-in and signing.
+- **App:** one Expo / React Native codebase for the Solana Seeker and other Android phones (Mobile Wallet Adapter), iPhone (Phantom and Solflare deeplinks), and the web (Wallet Standard), so the owner's keys stay in their own wallet on every phone.
 - **API:** Node/TypeScript (Hono + Postgres) on Railway.
 - **Open-source kit:** `@tilltide/agent-pay-kit` (MIT). It covers Solana Pay transfer and transaction requests, payment verification that a flood of junk transactions can't fool, loyalty minting and redemption, and sweep instructions with an identifying memo.
-- **Testing:** a 35-scenario end-to-end suite runs the real API against a local Solana validator, a stand-in PayPal, and a fresh database. It covers:
+- **Testing:** a 40-scenario end-to-end suite runs the real API against a local Solana validator, a stand-in PayPal, and a fresh database. It covers:
   - forged sign-ins and replayed approvals
   - underpayment, overpayment and late payment
   - double refunds after lost responses

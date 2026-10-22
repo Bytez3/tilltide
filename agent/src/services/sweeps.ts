@@ -106,10 +106,23 @@ export async function beginSweep(merchant: MerchantRow, id: string, lastValidBlo
   if (lastValidBlockHeight < height || lastValidBlockHeight > height + 400n) {
     throw new SweepError('Blockhash is stale or invalid; refresh and try again')
   }
+  // Only one sweep in the wallet or on its way at a time, or a replaced proposal and its replacement
+  // could both be signed: two transfers and two fees. Bring the others up to date first, so one whose
+  // signing window has passed doesn't block this.
+  const others = await sql<SweepRow[]>`
+    select * from sweeps where merchant_id = ${merchant.id} and id <> ${id} and status in ('signing', 'submitted')`
+  for (const other of others) await settleSweep(merchant, other)
   const [row] = await sql<SweepRow[]>`
     update sweeps set status = 'signing', signing_valid_until = ${lastValidBlockHeight.toString()}, error = null
-    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled') returning *`
-  if (!row) throw new SweepError('Sweep changed meanwhile; try again')
+    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled')
+      and not exists (
+        select 1 from sweeps other where other.merchant_id = ${merchant.id} and other.id <> ${id}
+          and other.status in ('signing', 'submitted'))
+    returning *`
+  if (!row) {
+    const [busy] = await sql`select 1 from sweeps where merchant_id = ${merchant.id} and id <> ${id} and status in ('signing', 'submitted')`
+    throw new SweepError(busy ? 'Another transfer to the owner is still in progress. Try again when it has finished.' : 'Sweep changed meanwhile; try again')
+  }
   return row
 }
 

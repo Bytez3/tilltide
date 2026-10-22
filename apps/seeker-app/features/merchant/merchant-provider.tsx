@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { AppState } from 'react-native'
 import { fromUint8Array } from 'js-base64'
-import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api, ApiError, Merchant, setSession } from '@/lib/api'
 import { useWallet } from '@/features/wallet/wallet'
 import { AppConfig } from '@/constants/app-config'
@@ -36,6 +37,9 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   const [unreachable, setUnreachable] = useState(false)
   const [retry, setRetry] = useState(0)
   const online = useOnline()
+  // The wallet connects partway through sign-in. Restoring then would swap the setup card for a spinner
+  // and lose any error from the rest of sign-in, so sign-in finishes the job itself.
+  const signingIn = useRef(false)
 
   // Back online after a failed restore: try again, so a till opened on bad wifi recovers by itself.
   useEffect(() => {
@@ -53,6 +57,7 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     let cancelled = false
     async function restore() {
+      if (signingIn.current) return
       setLoading(true)
       try {
         if (!account) {
@@ -65,11 +70,12 @@ export function MerchantProvider({ children }: PropsWithChildren) {
           }
           setSession(staffToken, () => clearSession())
           const shop = await api.getShop()
-          if (!cancelled) setMerchant(shop)
+          if (!cancelled) (setMerchant(shop), setUnreachable(false))
           return
         }
         const token = await AsyncStorage.getItem(sessionKey(account.address))
-        if (!token) return clearSession()
+        // Not signed in with this wallet yet. Leave any saved staff pairing alone.
+        if (!token) return (setSession(null), setMerchant(null))
         setSession(token, () => clearSession(account.address))
         const shop = await api.getShop().catch((e) => {
           if (e instanceof ApiError && e.status === 404) return null
@@ -93,31 +99,47 @@ export function MerchantProvider({ children }: PropsWithChildren) {
     }
   }, [account, clearSession, retry])
 
+  // Keep the shop's settings fresh: the owner may change the currency or connect PayPal on another phone,
+  // and a staff till should follow without a restart.
+  const signedIn = !!merchant
+  useEffect(() => {
+    if (!signedIn) return
+    const refreshShop = () => api.getShop().then(setMerchant).catch(() => {})
+    const sub = AppState.addEventListener('change', (state) => state === 'active' && refreshShop())
+    const timer = setInterval(refreshShop, 5 * 60_000)
+    return () => (sub.remove(), clearInterval(timer))
+  }, [signedIn])
+
   const signInAndSetUp = useCallback(
     async (shopName: string) => {
-      const { nonce, domain, statement } = await api.nonce()
-      const result = await signIn({ domain, statement, nonce })
-      const wallet = result.address
-      const { token } = await api.verifySignIn(wallet, fromUint8Array(result.signedMessage), fromUint8Array(result.signature))
-      await AsyncStorage.setItem(sessionKey(wallet), token)
-      setSession(token, () => clearSession(wallet))
+      signingIn.current = true
+      try {
+        const { nonce, domain, statement } = await api.nonce()
+        const result = await signIn({ domain, statement, nonce })
+        const wallet = result.address
+        const { token } = await api.verifySignIn(wallet, fromUint8Array(result.signedMessage), fromUint8Array(result.signature))
+        await AsyncStorage.setItem(sessionKey(wallet), token)
+        setSession(token, () => clearSession(wallet))
 
-      // Browser sandbox: give the test wallet SOL for fees.
-      if (isTestWallet && AppConfig.sandbox) await api.sandbox.airdrop(wallet).catch(() => {})
+        // Browser sandbox: give the test wallet SOL for fees.
+        if (isTestWallet && AppConfig.sandbox) await api.sandbox.airdrop(wallet).catch(() => {})
 
-      const existing = await api.getShop().catch((e) => {
-        if (e instanceof ApiError && e.status === 404) return null
-        throw e
-      })
-      if (existing) return setMerchant(existing)
-      if (!shopName.trim()) throw new Error('Enter your shop name to set up a new till')
-      let shop = await api.registerShop(shopName.trim())
-      // Sandbox: preset the test owner wallet so sweeps work straight away.
-      if (isTestWallet && AppConfig.sandbox) {
-        const info = await api.sandbox.info().catch(() => null)
-        if (info) shop = await api.updateShop({ ownerWallet: info.owner })
+        const existing = await api.getShop().catch((e) => {
+          if (e instanceof ApiError && e.status === 404) return null
+          throw e
+        })
+        if (existing) return setMerchant(existing)
+        if (!shopName.trim()) throw new Error('Enter your shop name to set up a new till')
+        let shop = await api.registerShop(shopName.trim())
+        // Sandbox: preset the test owner wallet so sweeps work straight away.
+        if (isTestWallet && AppConfig.sandbox) {
+          const info = await api.sandbox.info().catch(() => null)
+          if (info) shop = await api.updateShop({ ownerWallet: info.owner })
+        }
+        setMerchant(shop)
+      } finally {
+        signingIn.current = false
       }
-      setMerchant(shop)
     },
     [clearSession, isTestWallet, signIn],
   )

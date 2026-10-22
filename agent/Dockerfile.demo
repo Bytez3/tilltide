@@ -22,6 +22,7 @@ RUN cd apps/seeker-app && \
     sed -i 's#%BASE_URL%##g' /web/index.html
 
 FROM base
+ARG DEMO_URL=https://demo.tilltide.bytez3.com
 # Agave 4 needs io_uring, which containers usually block; 3.0 runs anywhere.
 ARG AGAVE=v3.0.14
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql bzip2 curl ca-certificates \
@@ -33,6 +34,7 @@ COPY packages/agent-pay-kit packages/agent-pay-kit
 COPY agent agent
 COPY --from=web /web /web
 
-ENV NODE_ENV=production SANDBOX_WEB_DIR=/web
+# The address the web app was built for, unless the host overrides it.
+ENV NODE_ENV=production SANDBOX_WEB_DIR=/web SANDBOX_PUBLIC_URL=$DEMO_URL
 EXPOSE 8787
 CMD ["sh", "agent/demo-start.sh"]

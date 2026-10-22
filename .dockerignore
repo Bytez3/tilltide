@@ -1,5 +1,7 @@
 **/node_modules
 **/.env
+**/.env.*
+!**/.env.example
 **/.points-authority.json
 apps/seeker-app/android
 apps/seeker-app/ios

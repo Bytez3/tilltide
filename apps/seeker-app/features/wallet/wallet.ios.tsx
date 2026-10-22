@@ -72,16 +72,22 @@ export function WalletProvider({ children }: PropsWithChildren) {
       pending.current = null
     }
     const sub = Linking.addEventListener('url', onUrl)
-    // Back in the app with no reply: the owner closed the wallet instead of answering.
+    // Back in the app with no reply: the owner left the wallet without answering. Wallets send a
+    // refusal when the owner taps Cancel, so this only covers switching apps by hand. A transaction may
+    // already be on its way, so give that one much longer before calling it unanswered.
     let timer: ReturnType<typeof setTimeout> | undefined
     const appState = AppState.addEventListener('change', (state) => {
       if (state !== 'active' || !pending.current) return
       const waiting = pending.current
-      timer = setTimeout(() => {
-        if (pending.current !== waiting) return
-        waiting.reject(new WalletRejected('The wallet was closed without answering'))
-        pending.current = null
-      }, 3000)
+      clearTimeout(timer)
+      timer = setTimeout(
+        () => {
+          if (pending.current !== waiting) return
+          waiting.reject(new WalletRejected('The wallet was closed without answering'))
+          pending.current = null
+        },
+        waiting.method === 'signAndSendTransaction' ? 60_000 : 5_000,
+      )
     })
     return () => (sub.remove(), appState.remove(), clearTimeout(timer))
   }, [])
@@ -89,11 +95,17 @@ export function WalletProvider({ children }: PropsWithChildren) {
   const call = useCallback(async (url: string, method: string) => {
     pending.current?.reject(new Error('Replaced by a newer wallet request'))
     const reply = new Promise<URLSearchParams>((resolve, reject) => (pending.current = { method, resolve, reject }))
-    await Linking.openURL(url)
+    try {
+      await Linking.openURL(url)
+    } catch (e) {
+      pending.current = null
+      throw e
+    }
     return reply
   }, [])
 
   const choose = useCallback(() => {
+    pick.current?.reject(new Error('No wallet chosen'))
     setPicking(true)
     return new Promise<DeeplinkWallet>((resolve, reject) => (pick.current = { resolve, reject }))
   }, [])
@@ -160,18 +172,20 @@ export function useWallet(): TilltideWallet {
           `${domain} wants you to sign in with your Solana account:\n${s.address}\n\n${statement}\n\n` +
           `URI: https://${domain}\nVersion: 1\nChain ID: ${CHAIN}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`
         const signedMessage = new TextEncoder().encode(text)
-        const reply = await call(requestUrl(s, 'signMessage', signMessagePayload(signedMessage), redirectFor('signMessage')), 'signMessage')
-        const { signature } = readReply<{ signature: string }>(s, reply)
-        return { address: s.address, signedMessage, signature: fromB58(signature) }
+        try {
+          const reply = await call(requestUrl(s, 'signMessage', signMessagePayload(signedMessage), redirectFor('signMessage')), 'signMessage')
+          const { signature } = readReply<{ signature: string }>(s, reply)
+          return { address: s.address, signedMessage, signature: fromB58(signature) }
+        } catch (e) {
+          // Anything but the owner saying no (4001) means the saved connection is dead, e.g. the wallet
+          // was reinstalled or Tilltide was removed from it. Forget it so the next try connects afresh.
+          if (!(e instanceof WalletRejected && e.code === '4001')) await save(null)
+          throw e
+        }
       },
 
-      async disconnect() {
-        if (session) {
-          // Tell the wallet too, but don't make the owner wait for it.
-          Linking.openURL(requestUrl(session, 'disconnect', {}, redirectFor('disconnect'))).catch(() => {})
-        }
-        await save(null)
-      },
+      // Forgetting the session is enough: telling the wallet would open it just to bounce straight back.
+      disconnect: () => save(null),
 
       async getLatestBlockhash() {
         const latest = await api.blockhash()

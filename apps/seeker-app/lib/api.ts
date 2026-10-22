@@ -167,13 +167,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       },
     })
   } catch {
+    clearTimeout(timer)
     reportReachable(false)
     throw new ApiError("Can't reach the Tilltide server. Check your connection.", 0)
-  } finally {
-    clearTimeout(timer)
+  }
+  // The timeout covers reading the body too: a reply that stalls halfway mustn't leave a spinner forever.
+  const body = await res.json().catch(() => (controller.signal.aborted ? null : {}))
+  clearTimeout(timer)
+  if (body === null) {
+    reportReachable(false)
+    throw new ApiError("Can't reach the Tilltide server. Check your connection.", 0)
   }
   reportReachable(true)
-  const body = await res.json().catch(() => ({}))
   if (res.status === 401 && path.startsWith('/shop')) onSignedOut?.()
   if (!res.ok) throw new ApiError((body as { error?: string }).error ?? `Request failed (${res.status})`, res.status)
   return body as T
@@ -213,6 +218,7 @@ export const api = {
   connectPayPal: () => request<{ url: string }>('/shop/paypal/connect', post()),
   refreshPayPal: () => request<Merchant>('/shop/paypal/refresh', post()),
   getPayment: (id: string) => request<Payment>(`/shop/payments/${id}`),
+  cancelPayment: (id: string) => request<Payment>(`/shop/payments/${id}/cancel`, post({})),
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
   chat: (messages: ChatTurn[]) =>

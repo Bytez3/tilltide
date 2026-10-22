@@ -1,6 +1,6 @@
 /** A local Solana chain with test-controlled USDC/PYUSD mints, plus a stand-in PayPal. Used by the e2e suite and the browser sandbox. */
 import { execFileSync, spawn } from 'node:child_process'
-import { rmSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname, join } from 'node:path'
 import { address, createSolanaRpc, getAddressEncoder, type Address } from '@solana/kit'
@@ -22,9 +22,15 @@ export async function until<T>(what: string, fn: () => Promise<T | null | undefi
   throw new Error(`Timed out waiting for ${what}`)
 }
 
-/** Copies a real devnet mint and swaps in our own mint authority. */
+/**
+ * Copies a real devnet mint and swaps in our own mint authority. Uses the saved copy in ./mints, so
+ * tests and the demo start without devnet (refresh with `solana account <mint> -u devnet --output json`).
+ */
 export function mintAccountFile(dir: string, mint: Address, authority: Address): string {
-  const raw = JSON.parse(execFileSync('solana', ['account', mint, '-u', 'devnet', '--output', 'json'], { encoding: 'utf8' }))
+  const saved = new URL(`./mints/${mint}.json`, import.meta.url)
+  const raw = JSON.parse(
+    existsSync(saved) ? readFileSync(saved, 'utf8') : execFileSync('solana', ['account', mint, '-u', 'devnet', '--output', 'json'], { encoding: 'utf8' }),
+  )
   const data = Buffer.from(raw.account.data[0], 'base64')
   data.writeUInt32LE(1, 0) // COption::Some
   Buffer.from(getAddressEncoder().encode(authority)).copy(data, 4)
@@ -153,7 +159,7 @@ export function startMockPayPal(port: number) {
 
 
 /** Starts solana-test-validator with copies of devnet USDC and PYUSD whose mint authority is `tokenAuthority`. */
-export async function startLocalValidator(opts: { port: number; ledgerDir: string; tokenAuthority: Address; verbose?: boolean }) {
+export async function startLocalValidator(opts: { port: number; ledgerDir: string; tokenAuthority: Address; verbose?: boolean; exitWithValidator?: boolean }) {
   const dir = opts.ledgerDir + '-accounts'
   execFileSync('mkdir', ['-p', dir])
   const validator = spawn(
@@ -180,9 +186,19 @@ export async function startLocalValidator(opts: { port: number; ledgerDir: strin
     },
     60_000,
   )
+  let stopping = false
+  // A long-running host (the demo) has nothing to serve without the chain: exit so it gets restarted.
+  if (opts.exitWithValidator) {
+    validator.on('exit', (code) => {
+      if (stopping) return
+      console.error(`solana-test-validator exited (code ${code}); stopping so the host restarts the sandbox`)
+      process.exit(1)
+    })
+  }
   return {
     rpc,
     stop: () => {
+      stopping = true
       validator.kill('SIGINT')
       // Ledgers grow to gigabytes and /tmp is often in memory: always clean up.
       setTimeout(() => rmSync(dirname(opts.ledgerDir), { recursive: true, force: true }), 1500).unref?.()

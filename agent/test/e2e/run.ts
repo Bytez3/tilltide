@@ -646,6 +646,27 @@ async function main() {
       assert.match(r.body.error, /fee didn't add up/)
     })
 
+    await step('only one sweep can be in the wallet at a time, so a replaced proposal and its replacement are never both signed', async () => {
+      const { proposeSweep, serializeSweep } = await import('../../src/services/sweeps')
+      const merchant = (await sql<any[]>`select * from merchants where wallet = ${till.address}`)[0]
+      const begin = async (id: string) => {
+        const { value: bh } = await rpc.getLatestBlockhash({ commitment: 'confirmed' }).send()
+        return api('POST', `/shop/sweeps/${id}/begin`, { lastValidBlockHeight: bh.lastValidBlockHeight.toString() }, tillToken)
+      }
+      // A second proposal replaces (cancels) the first; the first can still be opened, as the owner may
+      // have signed it just as it was replaced. But never both at once.
+      const first = serializeSweep(await proposeSweep(merchant, 100_000n, null))
+      const second = serializeSweep(await proposeSweep(merchant, 100_000n, null))
+      assert.equal((await begin(second.id)).status, 200)
+      const blocked = await begin(first.id)
+      assert.equal(blocked.status, 409)
+      assert.match(blocked.body.error, /Another transfer/)
+      // Once the second one's signing window has passed (and nothing landed), the first can go ahead.
+      await sql`update sweeps set signing_valid_until = 0 where id = ${second.id}`
+      assert.equal((await begin(first.id)).status, 200)
+      await sql`update sweeps set status = 'cancelled' where id in (${first.id}, ${second.id})`
+    })
+
     await step('PYUSD (Token-2022): pay, verify, points, sweep', async () => {
       await api('PATCH', '/shop', { token: 'PYUSD' }, tillToken)
       const created = await api('POST', '/shop/payments', { amount: '3.25' }, tillToken)
@@ -828,6 +849,18 @@ async function main() {
       assert.match(page, /Request expired/)
       await sleep(3500)
       assert.equal(paypal.order('ORDER4').status, 'APPROVED', 'not captured')
+      assert.equal((await api('GET', `/shop/payments/${created.body.id}`, undefined, tillToken)).body.status, 'expired')
+    })
+
+    await step('Cancel at the till closes the request: a PayPal order approved afterwards is never captured', async () => {
+      const created = await api('POST', '/shop/payments', { amount: '5', rail: 'paypal' }, tillToken)
+      const orderId = new URL(created.body.url).searchParams.get('token')!
+      const cancelled = await api('POST', `/shop/payments/${created.body.id}/cancel`, {}, tillToken)
+      assert.equal(cancelled.body.status, 'expired', JSON.stringify(cancelled.body))
+      paypal.approve(orderId)
+      await fetch(`${API}/paypal/return?token=${orderId}`)
+      await sleep(3500)
+      assert.equal(paypal.order(orderId).status, 'APPROVED', 'not captured')
       assert.equal((await api('GET', `/shop/payments/${created.body.id}`, undefined, tillToken)).body.status, 'expired')
     })
 

@@ -1,9 +1,20 @@
 import { ActivityIndicator, Pressable, StyleProp, Text, TextInput, TextInputProps, View, ViewStyle } from 'react-native'
 import { colors, fonts, ui } from '@/constants/theme'
 
-/** A text field with a clearly lighter placeholder, so hints never look like typed values. */
-export function Input({ style, ...props }: TextInputProps) {
-  return <TextInput placeholderTextColor={colors.placeholder} {...props} style={[ui.input, style]} />
+/**
+ * A text field with a clearly lighter placeholder, so hints never look like typed values. Money fields
+ * (decimal-pad) take a comma as the decimal point too, which is what many European keyboards type.
+ */
+export function Input({ style, onChangeText, ...props }: TextInputProps) {
+  const decimal = props.keyboardType === 'decimal-pad'
+  return (
+    <TextInput
+      placeholderTextColor={colors.placeholder}
+      {...props}
+      onChangeText={onChangeText && (decimal ? (t) => onChangeText(t.replace(/,/g, '.')) : onChangeText)}
+      style={[ui.input, style]}
+    />
+  )
 }
 
 export function Button({

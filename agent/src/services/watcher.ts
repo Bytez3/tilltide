@@ -139,7 +139,7 @@ async function tick() {
     if (!config.pointsMint || !config.pointsAuthoritySecret) return
     const owed = await sql<{ id: string }[]>`
       select id from payments
-      where rail = 'solana' and status = 'paid' and paid_at > now() - interval '7 days'
+      where rail in ('solana', 'paypal') and status = 'paid' and paid_at > now() - interval '7 days'
         and (points_status is null or (points_status = 'sending' and points_claimed_at < now() - interval '3 minutes'))
       order by paid_at limit 10`
     for (const { id } of owed) {

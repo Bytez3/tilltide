@@ -54,7 +54,7 @@ function secretKeyBytes() {
 const dir = mkdtempSync(join(tmpdir(), 'tilltide-sandbox-'))
 const tokenAuthority = await generateKeyPairSigner()
 console.log('Starting local Solana validator…')
-const { rpc, stop } = await startLocalValidator({ port: RPC_PORT, ledgerDir: join(dir, 'ledger'), tokenAuthority: tokenAuthority.address })
+const { rpc, stop } = await startLocalValidator({ port: RPC_PORT, ledgerDir: join(dir, 'ledger'), tokenAuthority: tokenAuthority.address, exitWithValidator: true })
 const shutdown = () => {
   stop()
   // Ledgers grow to gigabytes and /tmp is often in memory: remove it on the way out.
@@ -162,13 +162,30 @@ app.post('/sandbox/airdrop', async (c) => {
   return c.json({ ok: true })
 })
 
-/** The test customer pays a Solana Pay URL, exactly as a wallet would (transferChecked + reference). */
+/** Largest single payment the test customer makes, so the shared balance can't be emptied in one go. */
+const MAX_TEST_PAYMENT = 500_000_000n // 500 tokens
+const TOP_UP = 1_000_000_000n // 1000 tokens
+
+/** Keeps the shared test customer funded, so a busy day of judges (or a stranger) can't empty it. */
+async function topUp(mint: Address, program: Address) {
+  if (BigInt(await balance(customer.address, mint, program)) >= MAX_TEST_PAYMENT) return
+  await send(tokenAuthority, [
+    getMintToInstruction({ mint, token: await ata(customer.address, mint, program), mintAuthority: tokenAuthority, amount: TOP_UP }, { programAddress: program }),
+  ])
+}
+
+/**
+ * The test customer pays a Solana Pay URL, exactly as a wallet would (transferChecked + reference).
+ * The hosted demo is public, so it only pays this server's own payment requests: a shop's open payment,
+ * to that shop's till, for no more than it asked.
+ */
 app.post('/sandbox/pay', async (c) => {
   const { url, amount } = await c.req.json<{ url: string; amount?: string }>()
   try {
     // Transaction request (points sale): do what a wallet does — fetch the transaction, sign, send.
     const link = decodeURIComponent(url.slice('solana:'.length))
     if (/^https?:\/\//.test(link)) {
+      if (!link.startsWith(`${process.env.PUBLIC_URL}/`)) return c.json({ error: 'Not one of this sandbox\'s payment links' }, 400)
       const res = await (await fetch(link, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: customer.address }) })).json()
       if (!res.transaction) return c.json({ error: res.error ?? 'No transaction returned' }, 400)
       const tx = getTransactionDecoder().decode(Buffer.from(res.transaction, 'base64'))
@@ -177,15 +194,23 @@ app.post('/sandbox/pay', async (c) => {
       return c.json({ ok: true, message: res.message })
     }
     const req = parseTransferRequest(url)
+    const [open] = await sql<{ expected: bigint; till: string }[]>`
+      select coalesce(p.token_amount, p.amount) as expected, m.wallet as till from payments p join merchants m on m.id = p.merchant_id
+      where p.status = 'pending' and p.rail = 'solana' and p.reference = any(${req.references.map(String)})`
+    if (!open || open.till !== req.recipient) return c.json({ error: 'No open payment request matches this link' }, 400)
+    const pay = toBaseUnits(amount ?? req.amount!, 6)
+    if (pay <= 0n || pay > BigInt(open.expected) || pay > MAX_TEST_PAYMENT) return c.json({ error: 'The test customer only pays up to the amount asked' }, 400)
     const mint = req.splToken!
+    if (mint !== USDC && mint !== PYUSD) return c.json({ error: 'The test customer only holds USDC and PYUSD' }, 400)
     const program = mint === PYUSD ? TOKEN_2022 : TOKEN
+    await topUp(mint, program)
     const transfer = getTransferCheckedInstruction(
       {
         source: await ata(customer.address, mint, program),
         mint,
         destination: await ata(req.recipient, mint, program),
         authority: customer,
-        amount: toBaseUnits(amount ?? req.amount!, 6),
+        amount: pay,
         decimals: 6,
       },
       { programAddress: program },
@@ -203,17 +228,17 @@ app.post('/sandbox/pay', async (c) => {
 /** The shop owner finishes PayPal onboarding (in real life this happens on paypal.com). */
 app.post('/sandbox/paypal/onboard', async (c) => {
   const { url } = await c.req.json<{ url: string }>()
-  const tracking = new URL(url).searchParams.get('tracking')
+  const tracking = URL.canParse(url) ? new URL(url).searchParams.get('tracking') : null
   if (!tracking) return c.json({ error: 'Not an onboarding link' }, 400)
   paypal.completeOnboarding(tracking, `SANDBOX-${tracking.slice(0, 8).toUpperCase()}`)
-  await fetch(`http://localhost:${API_PORT}/paypal/onboarded?merchantId=${tracking}`)
+  await fetch(`http://localhost:${API_PORT}/paypal/onboarded?merchantId=${encodeURIComponent(tracking)}`)
   return c.json({ ok: true })
 })
 
 /** The customer approves a PayPal checkout (the stand-in PayPal then lets the API capture it). */
 app.post('/sandbox/paypal/approve', async (c) => {
   const { url } = await c.req.json<{ url: string }>()
-  const orderId = new URL(url).searchParams.get('token')
+  const orderId = URL.canParse(url) ? new URL(url).searchParams.get('token') : null
   if (!orderId || !paypal.order(orderId)) return c.json({ error: 'Unknown PayPal order' }, 400)
   paypal.approve(orderId)
   return c.json({ ok: true })
@@ -223,11 +248,13 @@ app.post('/sandbox/paypal/approve', async (c) => {
  * The browser test wallet needs the chain, but the validator only listens on localhost. Pass through
  * just the calls a wallet makes, so the hosted demo doesn't expose the validator's admin methods.
  */
-const RPC_METHODS = new Set(['getLatestBlockhash', 'sendTransaction', 'getBalance', 'getSignatureStatuses', 'getTokenAccountBalance', 'getAccountInfo', 'getHealth', 'simulateTransaction', 'getFeeForMessage', 'getMinimumBalanceForRentExemption'])
+const RPC_METHODS = new Set(['getLatestBlockhash', 'sendTransaction'])
 app.post('/sandbox/rpc', async (c) => {
   const body = await c.req.json().catch(() => null)
-  const calls = Array.isArray(body) ? body : [body]
-  if (!calls.length || calls.some((r) => !r || !RPC_METHODS.has(r.method))) return c.json({ error: 'Method not allowed in the sandbox' }, 400)
+  // One call at a time, and a transaction is at most 1232 bytes (about 1.7 KB as base64).
+  if (!body || Array.isArray(body) || !RPC_METHODS.has(body.method) || JSON.stringify(body).length > 4096) {
+    return c.json({ error: 'Not allowed in the sandbox' }, 400)
+  }
   const res = await fetch(`http://127.0.0.1:${RPC_PORT}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   return c.body(await res.text(), res.status as 200, { 'content-type': 'application/json' })
 })
@@ -237,11 +264,10 @@ if (WEB_DIR) {
   const { Hono } = await import('hono')
   const { serveStatic } = await import('@hono/node-server/serve-static')
   const web = new Hono()
-  // The app's own screens and files; everything else is the API. Unknown app paths get index.html.
+  // The app's screens and every exported file (bundles, icons, manifest); everything else is the API.
   const screens = new Set(['/', '/activity', '/agent', '/settings'])
-  web.use('/_expo/*', serveStatic({ root: WEB_DIR }))
-  web.use('/assets/*', serveStatic({ root: WEB_DIR }))
   web.get('*', async (c, next) => (screens.has(c.req.path) ? serveStatic({ root: WEB_DIR, path: 'index.html' })(c, next) : next()))
+  web.get('*', serveStatic({ root: WEB_DIR }))
   web.route('/', app)
   root = web
 }

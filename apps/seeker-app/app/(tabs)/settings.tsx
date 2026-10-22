@@ -1,13 +1,15 @@
 import { Ionicons } from '@expo/vector-icons'
 import { isAddress } from '@solana/kit'
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Linking, ScrollView, Text, View } from 'react-native'
+import { Keyboard, Platform, ScrollView, Text, View } from 'react-native'
 import { MenuEditor } from '@/components/menu-editor'
 import { Button, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
 import { api, Merchant } from '@/lib/api'
+import { openLinkAfterRequest } from '@/lib/open-link'
 import { AppConfig } from '@/constants/app-config'
 import { currencySymbol, shortAddress } from '@/lib/format'
 
@@ -34,6 +36,15 @@ export default function SettingsScreen() {
   const [pointValue, setPointValue] = useState('')
   const [maxPercent, setMaxPercent] = useState('')
   const [saving, setSaving] = useState(false)
+  // iPhone: lift the "Save changes" bar above the keyboard (Android resizes the screen by itself).
+  const [keyboard, setKeyboard] = useState(0)
+  const tabBar = useBottomTabBarHeight()
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return
+    const show = Keyboard.addListener('keyboardWillShow', (e) => setKeyboard(e.endCoordinates.height))
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboard(0))
+    return () => (show.remove(), hide.remove())
+  }, [])
   const [message, setMessage] = useState<string | null>(null)
   const [lookup, setLookup] = useState('')
   const [points, setPoints] = useState<string | null>(null)
@@ -110,7 +121,7 @@ export default function SettingsScreen() {
         await api.sandbox.finishPayPalOnboarding(url)
         replace(await api.refreshPayPal())
       } else {
-        await Linking.openURL(url)
+        await openLinkAfterRequest(url)
         // The server now marks the shop as connecting, which shows the "Check PayPal" button.
         replace(await api.refreshPayPal())
         setPaypalMessage('Finish connecting on PayPal, then come back and tap "Check PayPal".')
@@ -202,7 +213,7 @@ export default function SettingsScreen() {
 
   if (isStaff) {
     return (
-      <ScrollView style={ui.screen} contentContainerStyle={ui.content}>
+      <ScrollView style={ui.screen} contentContainerStyle={ui.content} automaticallyAdjustKeyboardInsets>
         <ShopCard name={merchant.name} detail={`Staff till${merchant.staffLabel ? `: ${merchant.staffLabel}` : ''}`} />
         <Text style={ui.muted}>This phone takes payments. The owner manages money, refunds and settings.</Text>
         <Button title="Sign out" variant="secondary" onPress={signOut} />
@@ -226,6 +237,7 @@ export default function SettingsScreen() {
   return (
     <View style={ui.screen}>
       <ScrollView
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={[ui.content, { paddingBottom: dirty ? 110 : 24 }]}
         keyboardShouldPersistTaps="handled"
       >
@@ -416,7 +428,7 @@ export default function SettingsScreen() {
             position: 'absolute',
             left: 12,
             right: 12,
-            bottom: 12,
+            bottom: keyboard ? keyboard - tabBar + 12 : 12,
             backgroundColor: colors.card,
             borderRadius: 18,
             borderWidth: 1,

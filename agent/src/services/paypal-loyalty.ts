@@ -55,7 +55,8 @@ export async function ledgerBalance(merchantId: string, payerKey: string, tx = s
   const [row] = await tx<{ balance: bigint }[]>`
     select
       -- Points earned, less the share of any sale that was refunded (a full refund takes them all back).
-      coalesce((select sum(p.points - floor(p.points::numeric * coalesce(r.refunded, 0) / nullif(p.amount, 0))::bigint)
+      -- Points were earned on what the customer paid (amount less any points discount), and that's what refunds come out of.
+      coalesce((select sum(p.points - floor(p.points::numeric * coalesce(r.refunded, 0) / nullif(p.amount - p.discount, 0))::bigint)
         from payments p
         left join (select payment_id, sum(amount) as refunded from refunds
                    where status in ('pending', 'completed') group by payment_id) r on r.payment_id = p.id

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native'
 import QRCode from 'react-native-qrcode-svg'
@@ -44,6 +44,14 @@ export default function ChargeScreen() {
   const [usePoints, setUsePoints] = useState(false)
   const [payment, setPayment] = useState<(Payment & { url: string }) | null>(null)
   const [creating, setCreating] = useState(false)
+  // Set synchronously, so two taps in the same frame can't create two sales.
+  const charging = useRef(false)
+  const queryClient = useQueryClient()
+  // Activity and Getting Started read these; refresh them when a sale is made or settles.
+  const refreshLists = () => {
+    queryClient.invalidateQueries({ queryKey: ['payments'] })
+    queryClient.invalidateQueries({ queryKey: ['summary'] })
+  }
   const [error, setError] = useState<string | null>(null)
   // The basket: item id → quantity. Prices come from the server's menu; the server re-prices at charge time.
   const [basket, setBasket] = useState<Record<string, number>>({})
@@ -80,7 +88,9 @@ export default function ChargeScreen() {
       if (key === '.' && current === '') return '0.'
       if (current.includes('.') && current.split('.')[1]!.length >= 2) return current
       if (current === '0' && key !== '.') return key
-      return (current + key).slice(0, 9)
+      // Up to 9,999,999.99: the server refuses anything over a million anyway.
+      if (key !== '.' && !current.includes('.') && current.length >= 7) return current
+      return current + key
     })
   }
 
@@ -96,7 +106,10 @@ export default function ChargeScreen() {
       setPayment({ ...latest, url: created.url })
       if (latest.status === 'paid') {
         // Buzz once, when it first turns paid; polling carries on briefly for the points line.
-        if (paidAt === null) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        if (paidAt === null) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+          refreshLists()
+        }
         paidAt ??= Date.now()
         if (latest.pointsIssued || latest.rail === 'paypal' || latest.points === '0' || Date.now() - paidAt > 30_000)
           return
@@ -107,7 +120,8 @@ export default function ChargeScreen() {
   }
 
   async function charge() {
-    if (!merchant) return
+    if (!merchant || charging.current) return
+    charging.current = true
     setCreating(true)
     setError(null)
     try {
@@ -123,6 +137,7 @@ export default function ChargeScreen() {
       )
       current.current = created.id
       setPayment({ ...created, url: created.url ?? '' })
+      refreshLists()
       if (created.status === 'paid') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       else watch({ ...created, url: created.url ?? '' })
     } catch (e) {
@@ -130,6 +145,7 @@ export default function ChargeScreen() {
       // The server refused an item (changed or removed elsewhere): fetch the current menu.
       if (e instanceof ApiError && e.status === 400) items.refetch()
     } finally {
+      charging.current = false
       setCreating(false)
     }
   }
@@ -140,6 +156,19 @@ export default function ChargeScreen() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  /** Cancel closes the request on the server too, so the customer can't still pay the QR. */
+  async function cancel() {
+    if (!payment) return reset()
+    try {
+      const latest = await api.cancelPayment(payment.id)
+      // It was paid a moment ago: show that instead of clearing it.
+      if (latest.status === 'paid') return setPayment({ ...latest, url: payment.url })
+    } catch {
+      // Offline: clear the screen anyway; the request still expires by itself.
+    }
+    reset()
   }
 
   function reset() {
@@ -315,7 +344,7 @@ export default function ChargeScreen() {
           <Button
             title={payment.status === 'pending' ? 'Cancel' : 'New sale'}
             variant={payment.status === 'pending' ? 'secondary' : 'primary'}
-            onPress={reset}
+            onPress={payment.status === 'pending' ? cancel : reset}
             style={{ alignSelf: 'stretch' }}
           />
         </View>
@@ -350,7 +379,7 @@ export default function ChargeScreen() {
     merchant.paypal.status !== 'connected' &&
     !merchant.paypal.email
   return (
-    <ScrollView style={ui.screen} contentContainerStyle={{ paddingBottom: 16 }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={ui.screen} contentContainerStyle={{ paddingBottom: 16 }} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
       {/* Harbour band: how they're paying, the total, and what's in the sale. */}
       <View style={[BAND, { paddingTop: 4, paddingBottom: 22, gap: 12 }]}>
         <Segmented

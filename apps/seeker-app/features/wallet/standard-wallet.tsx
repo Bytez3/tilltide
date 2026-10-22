@@ -127,17 +127,21 @@ export function StandardWalletProvider({ children }: PropsWithChildren) {
   }, [])
 
   // Reconnect quietly to the wallet used last time, so a reload keeps the till signed in.
+  const reconnecting = useRef(false)
   useEffect(() => {
-    if (wallet) return
+    if (wallet || reconnecting.current) return
     const last = storage()?.getItem(LAST_WALLET)
     const w = last && wallets.find((x) => x.name === last)
     if (!w) return
+    reconnecting.current = true
     features(w)[StandardConnect]!
       .connect({ silent: true })
       .then(({ accounts }) => {
-        if (accounts[0]) (setWallet(w), setAccount(accounts[0]))
+        // Skip it if the owner signed out (or chose another wallet) while this was in flight.
+        if (accounts[0] && storage()?.getItem(LAST_WALLET) === w.name) (setWallet((cur) => cur ?? w), setAccount((cur) => cur ?? accounts[0]!))
       })
       .catch(() => {})
+      .finally(() => (reconnecting.current = false))
   }, [wallet, wallets])
 
   // Follow account switches inside the wallet.
@@ -151,6 +155,7 @@ export function StandardWalletProvider({ children }: PropsWithChildren) {
 
   const choose = useCallback(() => {
     if (wallets.length === 1) return Promise.resolve(wallets[0]!)
+    pick.current?.reject(new Error('No wallet chosen'))
     setPicking(true)
     return new Promise<Wallet>((resolve, reject) => (pick.current = { resolve, reject }))
   }, [wallets])
@@ -231,6 +236,7 @@ function WalletPicker({ visible, wallets, onPick }: { visible: boolean; wallets:
 }
 
 const b58 = getBase58Decoder()
+const short = (a: string) => `${a.slice(0, 4)}…${a.slice(-4)}`
 
 export function useStandardWallet(): TilltideWallet {
   const ctx = useContext(WalletCtx)!
@@ -252,8 +258,11 @@ export function useStandardWallet(): TilltideWallet {
         if (f[SolanaSignIn]) {
           const [out] = await f[SolanaSignIn].signIn({ domain, statement, nonce, uri: `https://${domain}`, version: '1', chainId: CHAIN, issuedAt })
           if (!out) throw new Error('The wallet did not sign in')
-          ctx.setConnected(w, out.account)
           const address = new TextDecoder().decode(out.signedMessage).split('\n')[1]?.trim() ?? out.account.address
+          // Approving a refund: the wallet may let the owner pick another account. Refuse rather than
+          // switch the till to it, which would sign the till out.
+          if (account && address !== account.address) throw new Error(`Sign with the till's wallet account (${short(account.address)}). To use another account, sign out first.`)
+          ctx.setConnected(w, out.account)
           return { address, signedMessage: out.signedMessage, signature: out.signature }
         }
         // Older wallets: connect, then sign the same Sign In With Solana text as a plain message.
