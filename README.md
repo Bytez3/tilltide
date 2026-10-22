@@ -109,7 +109,7 @@ The end-to-end suite starts `solana-test-validator` with copies of the devnet US
 
 The API ships as a Docker image (`agent/Dockerfile`, built from the repo root). It runs migrations on start, so a fresh database just works.
 
-On Railway, `railway.json` at the repo root builds the API from `agent/Dockerfile`. Add a Postgres database and set the env vars from `agent/.env.example`. Set `PUBLIC_URL` to the service's public URL so PayPal can send customers back.
+On Railway, each service picks its Dockerfile with the `RAILWAY_DOCKERFILE_PATH` variable: `agent/Dockerfile` for the API, `agent/Dockerfile.demo` for the judge demo. `railway.json` sets the health check. For the API, add a Postgres database and set the env vars from `agent/.env.example`. Set `PUBLIC_URL` to the service's public URL so PayPal can send customers back. The demo needs only `SANDBOX_PUBLIC_URL`, plus `ANTHROPIC_API_KEY` and `AGENT_GLOBAL_DAILY_LIMIT` for the assistant.
 
 ```bash
 docker build -f agent/Dockerfile -t tilltide-agent .
