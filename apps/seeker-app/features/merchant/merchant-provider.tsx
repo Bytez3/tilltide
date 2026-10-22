@@ -15,7 +15,8 @@ interface MerchantContextValue {
   loading: boolean
   /** Sign In With Solana over MWA, then register the shop if it's new. */
   signInAndSetUp: (shopName: string) => Promise<void>
-  update: (patch: Parameters<typeof api.updateShop>[0]) => Promise<void>
+  /** Saves settings and returns the shop as the server stored them. */
+  update: (patch: Parameters<typeof api.updateShop>[0]) => Promise<Merchant>
   /** Replace the cached shop (e.g. after re-checking PayPal). */
   replace: (merchant: Merchant) => void
   signOut: () => Promise<void>
@@ -122,7 +123,9 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   )
 
   const update = useCallback(async (patch: Parameters<typeof api.updateShop>[0]) => {
-    setMerchant(await api.updateShop(patch))
+    const saved = await api.updateShop(patch)
+    setMerchant(saved)
+    return saved
   }, [])
 
   const signOut = useCallback(async () => {

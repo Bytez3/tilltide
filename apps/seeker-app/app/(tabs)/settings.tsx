@@ -7,7 +7,7 @@ import { MenuEditor } from '@/components/menu-editor'
 import { Button, Input, Segmented } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
-import { api } from '@/lib/api'
+import { api, Merchant } from '@/lib/api'
 import { AppConfig } from '@/constants/app-config'
 import { currencySymbol, shortAddress } from '@/lib/format'
 
@@ -38,19 +38,23 @@ export default function SettingsScreen() {
   const [lookup, setLookup] = useState('')
   const [points, setPoints] = useState<string | null>(null)
 
+  /** Fill the form from the shop as the server has it. */
+  function seed(m: Merchant) {
+    setRate(String(m.pointsPerUnit))
+    setOwner(m.ownerWallet ?? '')
+    setToken(m.token)
+    setCurrency(m.currency)
+    setCloseTime(m.closeTime)
+    setSeekerBonus(m.seekerBonus)
+    setPointValue(m.pointValue)
+    setPaypalEmail(m.paypal.email ?? '')
+    setMaxPercent(String(m.redeemMaxPercent))
+  }
+
+  // Seed when a different shop loads, and after each save (below). Not on every `merchant` change:
+  // saving the PayPal email or re-checking PayPal also replaces it, and must not wipe unsaved edits.
   useEffect(() => {
-    if (!merchant) return
-    setRate(String(merchant.pointsPerUnit))
-    setOwner(merchant.ownerWallet ?? '')
-    setToken(merchant.token)
-    setCurrency(merchant.currency)
-    setCloseTime(merchant.closeTime)
-    setSeekerBonus(merchant.seekerBonus)
-    setPointValue(merchant.pointValue)
-    setPaypalEmail(merchant.paypal.email ?? '')
-    setMaxPercent(String(merchant.redeemMaxPercent))
-    // Reseed the form only when a different shop loads: saving the PayPal email or re-checking PayPal
-    // also replaces `merchant`, and must not wipe edits that haven't been saved yet.
+    if (merchant) seed(merchant)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [merchant?.id])
 
@@ -76,7 +80,7 @@ export default function SettingsScreen() {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(closeTime.trim())) throw new Error('Closing time must look like 17:30')
       const ownerWallet = owner.trim()
       if (ownerWallet && !isAddress(ownerWallet)) throw new Error('Owner wallet is not a Solana address')
-      await update({
+      const saved = await update({
         pointsPerUnit,
         ownerWallet: ownerWallet || null,
         token,
@@ -86,6 +90,8 @@ export default function SettingsScreen() {
         closeTime: closeTime.trim(),
         seekerBonus,
       })
+      // The server tidies values (0.10 is stored as 0.1); show what it saved, so nothing looks unsaved.
+      seed(saved)
       setMessage('Saved')
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
