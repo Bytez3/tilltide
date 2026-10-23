@@ -25,10 +25,13 @@
   .btn { display:inline-block; padding:13px 20px; border-radius:14px; font-weight:700; text-decoration:none; }
   .btn-light { background:#fff; color:#0E6E6B; }
   .btn-ghost { background:var(--chip); color:var(--band-ink); }
+  .btn-outline { background:transparent; color:var(--sea); box-shadow:inset 0 0 0 2px var(--sea); }
   .pills { display:flex; flex-wrap:wrap; gap:8px; margin-top:22px; }
   .pill { background:var(--chip); color:var(--band-ink); font-size:13px; font-weight:600; padding:5px 12px; border-radius:99px; }
   .phone { justify-self:center; width:min(300px,80vw); border-radius:34px; border:7px solid #1b1b1b; overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.25); background:#1b1b1b; }
-  .phone img { display:block; width:100%; height:auto; }
+  .phone img, .phone video { display:block; width:100%; height:auto; }
+  .watch { display:grid; justify-items:center; gap:14px; }
+  .watch .phone { width:min(320px,86vw); }
   section { padding:56px 0 8px; }
   h2 { font-size:clamp(26px,3.4vw,34px); letter-spacing:-.8px; margin:0 0 8px; font-weight:800; }
   .sub { color:var(--muted); margin:0 0 28px; max-width:620px; }
@@ -101,6 +104,19 @@
       <div class="step"><h3>Tap what they're having</h3><p>Or type a price. Add their loyalty code if they have one.</p></div>
       <div class="step"><h3>They scan and pay</h3><p>PayPal, card or wallet from their own phone. Cash and card-reader sales are one more tap.</p></div>
       <div class="step"><h3>Paid, with a receipt</h3><p>The till turns green. They scan once more for a receipt with their points.</p></div>
+    </div>
+  </section>
+
+  <section id="watch">
+    <h2>Watch it work</h2>
+    <p class="sub">A real till, recorded from the live demo: a PayPal sale, a wallet sale in PYUSD, loyalty points, cash with change, sending the takings, a refund and the end-of-day report. 90 seconds.</p>
+    <div class="watch">
+      <div class="phone">
+        <video src="/media/tilltide-demo.mp4" poster="/media/tilltide-demo.jpg" controls playsinline muted preload="metadata" width="390" height="844" aria-label="Tilltide demo: taking sales and closing the day on the till">
+          <a href="/media/tilltide-demo.mp4">Watch the demo video</a>
+        </video>
+      </div>
+      <a class="btn btn-outline" href="https://demo.tilltide.bytez3.com">Try it yourself</a>
     </div>
   </section>
 

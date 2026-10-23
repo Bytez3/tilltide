@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs'
+import { relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import Anthropic from '@anthropic-ai/sdk'
 import { address, isAddress, isSignature, type Signature } from '@solana/kit'
 import { fromBaseUnits, toBaseUnits } from '@tilltide/agent-pay-kit'
 import { findAssociatedTokenPda, TOKEN_PROGRAM_ADDRESS } from '@solana-program/token'
+import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { cors } from 'hono/cors'
@@ -132,6 +135,14 @@ app.get('/shots/:name', (c) => {
   const img = shots.get(c.req.param('name'))
   return img ? c.body(img, 200, { 'content-type': 'image/jpeg', 'cache-control': 'public, max-age=86400' }) : c.notFound()
 })
+// The demo video and its poster on the landing page. Served with byte ranges, which phones need to play video.
+app.use(
+  '/media/*',
+  serveStatic({
+    root: relative(process.cwd(), fileURLToPath(new URL('../public', import.meta.url))),
+    onFound: (_, c) => c.header('cache-control', 'public, max-age=86400'),
+  }),
+)
 app.get('/privacy', (c) => c.html(privacyPage))
 app.get('/terms', (c) => c.html(termsPage))
 app.get('/favicon.png', (c) => c.body(favicon, 200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' }))
