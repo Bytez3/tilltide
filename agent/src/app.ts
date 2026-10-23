@@ -404,7 +404,7 @@ shop.patch('/', async (c) => {
   const [row] = await sql<MerchantRow[]>`
     update merchants set
       name = ${input.name ?? merchant.name},
-      owner_wallet = ${input.ownerWallet === undefined ? merchant.ownerWallet : input.ownerWallet},
+      owner_wallet = ${input.ownerWallet === null ? null : sql`owner_wallet`},
       token_symbol = ${input.token ?? merchant.tokenSymbol},
       points_per_unit = ${input.pointsPerUnit ?? merchant.pointsPerUnit},
       point_value = ${input.pointValue !== undefined ? toBaseUnits(input.pointValue, LEDGER_DECIMALS).toString() : merchant.pointValue.toString()},

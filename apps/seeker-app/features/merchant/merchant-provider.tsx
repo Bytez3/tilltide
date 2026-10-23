@@ -106,10 +106,16 @@ export function MerchantProvider({ children }: PropsWithChildren) {
   const signedIn = !!merchant
   useEffect(() => {
     if (!signedIn) return
-    const refreshShop = () => api.getShop().then(setMerchant).catch(() => {})
+    let stopped = false
+    // A refresh that finishes after sign-out mustn't bring the till back.
+    const refreshShop = () => api.getShop().then((shop) => !stopped && setMerchant(shop)).catch(() => {})
     const sub = AppState.addEventListener('change', (state) => state === 'active' && refreshShop())
     const timer = setInterval(refreshShop, 5 * 60_000)
-    return () => (sub.remove(), clearInterval(timer))
+    return () => {
+      stopped = true
+      sub.remove()
+      clearInterval(timer)
+    }
   }, [signedIn])
 
   const approveOwnerWallet = useCallback(

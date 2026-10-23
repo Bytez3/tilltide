@@ -165,6 +165,11 @@ app.post('/sandbox/airdrop', async (c) => {
 /** Largest single payment the test customer makes, so the shared balance can't be emptied in one go. */
 const MAX_TEST_PAYMENT = 500_000_000n // 500 tokens
 const TOP_UP = 1_000_000_000n // 1000 tokens
+/**
+ * What the test customer has paid towards each request. Each payment is at most the amount asked, and
+ * the total at most twice that: enough to show a short payment ("pay half") followed by a full one.
+ */
+const paidTowards = new Map<string, bigint>()
 
 /** Keeps the shared test customer funded, so a busy day of judges (or a stranger) can't empty it. */
 async function topUp(mint: Address, program: Address) {
@@ -199,7 +204,11 @@ app.post('/sandbox/pay', async (c) => {
       where p.status = 'pending' and p.rail = 'solana' and p.reference = any(${req.references.map(String)})`
     if (!open || open.till !== req.recipient) return c.json({ error: 'No open payment request matches this link' }, 400)
     const pay = toBaseUnits(amount ?? req.amount!, 6)
-    if (pay <= 0n || pay > BigInt(open.expected) || pay > MAX_TEST_PAYMENT) return c.json({ error: 'The test customer only pays up to the amount asked' }, 400)
+    const ref = String(req.references[0])
+    const already = paidTowards.get(ref) ?? 0n
+    if (pay <= 0n || pay > BigInt(open.expected) || already + pay > 2n * BigInt(open.expected) || pay > MAX_TEST_PAYMENT) {
+      return c.json({ error: already ? 'The test customer has already paid this request' : 'The test customer only pays up to the amount asked' }, 400)
+    }
     const mint = req.splToken!
     if (mint !== USDC && mint !== PYUSD) return c.json({ error: 'The test customer only holds USDC and PYUSD' }, 400)
     const program = mint === PYUSD ? TOKEN_2022 : TOKEN
@@ -219,6 +228,7 @@ app.post('/sandbox/pay', async (c) => {
       await getCreateAssociatedTokenIdempotentInstructionAsync({ payer: customer, owner: req.recipient, mint, tokenProgram: program }),
       { ...transfer, accounts: [...transfer.accounts, ...req.references.map((r) => ({ address: r, role: AccountRole.READONLY }))] },
     ])
+    paidTowards.set(ref, already + pay)
     return c.json({ ok: true, signature, customer: customer.address })
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400)

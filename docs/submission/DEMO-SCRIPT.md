@@ -18,9 +18,11 @@ The rules cap the video at 3 minutes. Record on a phone (or the browser sandbox 
 | 6 | 1:25–1:55 | Agent tab: "What did I take today, and what sold best?" → answer with the PayPal and wallet split and the top items. Then "Refund the cream tea, the scone was cold" → refund card | "At the end of the day I just ask. Claude reads the ledger and reconciles PayPal and wallet together. It can even set up a refund, but it can't move money by itself." |
 | 7 | 1:55–2:15 | Tap **Approve with wallet**; the wallet prompt shows the exact refund wording; sign; **Refunded ✓** | "I approve by signing the exact refund with my wallet. Only then does Tilltide refund through PayPal, safely, so it can never refund twice." |
 | 8 | 2:15–2:30 | Activity: the end-of-day card with Claude's note; tap **Export CSV** | "At closing time it writes my end-of-day report, and my bookkeeper gets a CSV." |
-| 9 | 2:30–2:45 | Settings → Staff devices; pair a second phone with a code | "Staff can take payments on their own phone, but only the owner can move money. Tilltide: PayPal at the counter, AI in the back office, the owner in charge." |
+| 9 | 2:30–2:45 | Settings → Staff devices; pair a second phone with a code. Quick cut: the same till on an iPhone and in a browser. End card: **demo.tilltide.bytez3.com** | "Staff can take payments on their own phone, but only the owner can move money. It runs on a Seeker, any Android, an iPhone or a browser. Tilltide: PayPal at the counter, AI in the back office, the owner in charge." |
 
-**Captions to add:** "PayPal Partner Referrals", "Orders v2 + platform fees", "Payments v2 refund", "PYUSD", "Claude tool use".
+**Captions to add:** "PayPal Partner Referrals", "Orders v2 + platform fees", "Payments v2 refund", "PYUSD", "Claude tool use", and on the end card "Try it: demo.tilltide.bytez3.com".
+
+**No music unless it's licensed for this use** (the rules forbid unlicensed music and third-party trademarks beyond the PayPal and Solana names needed to explain the integration). Upload to YouTube as **Public** (not Unlisted), then paste the link into `SUBMISSION.md` and Devpost.
 
 **Screenshots for Devpost:** ready-made in [`screenshots/`](screenshots), captured from the sandbox at phone size:
 - the till on PayPal, the PayPal QR, and Paid ✓

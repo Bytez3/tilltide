@@ -1,5 +1,4 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { reserveAgentRequest } from './usage'
 import { alert } from '../alerts'
 import { config } from '../config'
 import { sql, type MerchantRow } from '../db'
@@ -60,12 +59,18 @@ export function reportText(s: Summary, r: Reconciliation | null): string {
   return lines.join(' ')
 }
 
+/** Claude notes per shop per day: the first report, plus a couple of refreshes after late sales. */
+const NOTES_PER_DAY = 3
+
 /** A short, friendly note from Claude on top of the facts. Optional: skipped without an API key. */
 async function narrativeFor(merchant: MerchantRow, text: string, summary: Summary): Promise<string | null> {
   // Nothing to say on a day with no sales, and every shop gets a report: skip the call, and its cost.
   if (!process.env.ANTHROPIC_API_KEY || summary.paidCount === 0) return null
-  // Counts against the assistant's daily caps, so rewrites can't run up the bill.
-  if (!(await reserveAgentRequest(merchant).then(() => true, () => false))) return null
+  // On a server with a global cap (the public demo), notes stop once the day's questions are used up.
+  if (config.agent.globalDailyLimit !== null) {
+    const [used] = await sql<{ n: number }[]>`select coalesce(sum(requests), 0)::int as n from agent_usage where day = current_date`
+    if (used!.n >= config.agent.globalDailyLimit) return null
+  }
   try {
     const client = new Anthropic({ timeout: 60_000, maxRetries: 1 })
     const isHaiku = config.agent.model.startsWith('claude-haiku')
@@ -101,20 +106,22 @@ export async function writeDailyReport(merchant: MerchantRow, date: string): Pro
   if (unexplained > 0) {
     void alert(`unexplained:${merchant.id}:${date}`, `${merchant.name}: ${unexplained} transfer(s) in the till on ${date} that Tilltide didn't take`)
   }
-  // A rewrite whose facts haven't changed keeps its note.
-  const [previous] = await sql<{ text: string; narrative: string | null }[]>`
-    select text, narrative from daily_reports where merchant_id = ${merchant.id} and day = ${date}`
-  const narrative =
-    previous && previous.text === text
-      ? previous.narrative
-      : await narrativeFor(merchant, text, summary)
+  // A rewrite whose facts haven't changed keeps its note. Notes have their own small allowance, separate
+  // from the owner's assistant questions, so a busy evening of late sales can't use those up.
+  const [previous] = await sql<{ text: string; narrative: string | null; narrativeCount: number }[]>`
+    select text, narrative, narrative_count from daily_reports where merchant_id = ${merchant.id} and day = ${date}`
+  const count = previous?.narrativeCount ?? 0
+  const fresh = previous?.text === text || count >= NOTES_PER_DAY ? null : await narrativeFor(merchant, text, summary)
+  // Past the allowance, a changed report drops its note rather than keep one quoting old figures.
+  const narrative = fresh ?? (previous?.text === text ? previous.narrative : null)
+  const notes = count + (fresh ? 1 : 0)
   const stored = { summary, reconciliation }
   const json = JSON.stringify(stored, (_, v) => (typeof v === 'bigint' ? v.toString() : v))
   const [row] = await sql<{ createdAt: Date }[]>`
-    insert into daily_reports (merchant_id, day, summary, text, narrative)
-    values (${merchant.id}, ${date}, ${json}::jsonb, ${text}, ${narrative})
+    insert into daily_reports (merchant_id, day, summary, text, narrative, narrative_count)
+    values (${merchant.id}, ${date}, ${json}::jsonb, ${text}, ${narrative}, ${notes})
     on conflict (merchant_id, day) do update set summary = excluded.summary, text = excluded.text,
-      narrative = excluded.narrative, created_at = now()
+      narrative = excluded.narrative, narrative_count = excluded.narrative_count, created_at = now()
     returning created_at`
   return { date, text, narrative, summary, reconciliation, createdAt: row!.createdAt.toISOString() }
 }

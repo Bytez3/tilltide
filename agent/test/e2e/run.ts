@@ -793,6 +793,20 @@ async function main() {
       assert.equal(body.summary.pointsRedeemed, '9')
       assert.equal(body.summary.pointsDiscount, '0.9')
       assert.equal((await api('POST', '/shop/payments', { amount: '1', rail: 'paypal', usePoints: true }, tillToken)).status, 400)
+
+      // Two sales verified at the same moment both spending the same points: the money that arrived is
+      // still recorded, only the points the customer had left are honoured, and the owner is told.
+      const { markPaymentPaid } = await import('../../src/services/payments')
+      const race = await api('POST', '/shop/payments', { amount: '2.00', usePoints: true }, tillToken)
+      const raceRow = (await sql<any[]>`select * from payments where id = ${race.body.id}`)[0]
+      const { shopPointsBalance } = await import('../../src/services/redeem')
+      const left = await shopPointsBalance(raceRow.merchantId, customer.address, race.body.id)
+      const recorded = await markPaymentPaid(raceRow, { ok: true, signature: `race${'1'.repeat(84)}`, payer: customer.address } as never, { pointsRedeemed: 50n, discount: 500_000n })
+      assert.equal(recorded, true)
+      const raced = (await sql<any[]>`select status, points_redeemed from payments where id = ${race.body.id}`)[0]
+      assert.equal(raced.status, 'paid')
+      assert.equal(BigInt(raced.pointsRedeemed), left, 'only the points left are counted')
+      await sql`update payments set status = 'failed' where id = ${race.body.id}`
     })
 
     await step('PayPal first: a shop must connect its own PayPal; a forged onboarding return is ignored', async () => {

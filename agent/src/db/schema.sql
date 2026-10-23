@@ -250,3 +250,5 @@ create index if not exists points_accounts_created_idx on points_accounts (creat
 alter table merchants add column if not exists owner_wallet_pending text;
 alter table merchants add column if not exists owner_wallet_nonce text;
 alter table merchants add column if not exists owner_wallet_nonce_at timestamptz;
+-- How many Claude notes a day's report has had: rewrites can refresh the note, up to a small cap.
+alter table daily_reports add column if not exists narrative_count int not null default 0;

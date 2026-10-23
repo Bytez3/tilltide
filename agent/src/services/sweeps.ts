@@ -112,13 +112,18 @@ export async function beginSweep(merchant: MerchantRow, id: string, lastValidBlo
   const others = await sql<SweepRow[]>`
     select * from sweeps where merchant_id = ${merchant.id} and id <> ${id} and status in ('signing', 'submitted')`
   for (const other of others) await settleSweep(merchant, other)
-  const [row] = await sql<SweepRow[]>`
-    update sweeps set status = 'signing', signing_valid_until = ${lastValidBlockHeight.toString()}, error = null
-    where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled')
-      and not exists (
-        select 1 from sweeps other where other.merchant_id = ${merchant.id} and other.id <> ${id}
-          and other.status in ('signing', 'submitted'))
-    returning *`
+  // Under a per-shop lock, so two of these at once (two phones, two tabs) can't both pass the check.
+  const row = await sql.begin(async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${`sweep:${merchant.id}`}))`
+    const [updated] = await tx<SweepRow[]>`
+      update sweeps set status = 'signing', signing_valid_until = ${lastValidBlockHeight.toString()}, error = null
+      where id = ${id} and merchant_id = ${merchant.id} and status in ('proposed', 'cancelled')
+        and not exists (
+          select 1 from sweeps other where other.merchant_id = ${merchant.id} and other.id <> ${id}
+            and other.status in ('signing', 'submitted'))
+      returning *`
+    return updated
+  })
   if (!row) {
     const [busy] = await sql`select 1 from sweeps where merchant_id = ${merchant.id} and id <> ${id} and status in ('signing', 'submitted')`
     throw new SweepError(busy ? 'Another transfer to the owner is still in progress. Try again when it has finished.' : 'Sweep changed meanwhile; try again')

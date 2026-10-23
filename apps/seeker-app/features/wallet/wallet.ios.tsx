@@ -31,6 +31,7 @@ import {
   transactionPayload,
   WalletRejected,
   fromB58,
+  toB58,
   type DeeplinkSession,
   type DeeplinkWallet,
 } from './deeplink-protocol'
@@ -40,6 +41,8 @@ const CHAIN = AppConfig.chain
 // Phantom and Solflare name mainnet 'mainnet-beta'.
 const CLUSTER = AppConfig.cluster === 'mainnet' ? 'mainnet-beta' : 'devnet'
 const STORAGE_KEY = 'tilltide:ios-wallet'
+/** A connect waiting for the wallet's reply, kept so a reply that relaunches the app can still finish it. */
+const CONNECTING_KEY = 'tilltide:ios-wallet-connecting'
 
 /** Where the wallet sends the owner back to; app/wallet-callback/[method].tsx returns them to where they were. */
 const redirectFor = (method: string) => Linking.createURL(`wallet-callback/${method}`)
@@ -63,6 +66,21 @@ export function WalletProvider({ children }: PropsWithChildren) {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => raw && setSession(JSON.parse(raw)))
       .catch(() => {})
+    // iOS may close Tilltide while the owner is in the wallet; its reply then relaunches the app. Finish
+    // the connect from that reply, so the owner only has to tap Sign in again to sign.
+    Promise.all([Linking.getInitialURL(), AsyncStorage.getItem(CONNECTING_KEY)])
+      .then(async ([url, raw]) => {
+        const m = url?.match(/wallet-callback\/connect\??(.*)$/)
+        if (!m || !raw) return
+        const { wallet: name, dappSecret } = JSON.parse(raw) as { wallet: string; dappSecret: string }
+        const wallet = DEEPLINK_WALLETS.find((w) => w.name === name)
+        if (!wallet) return
+        const s = readConnect(wallet, fromB58(dappSecret), new URLSearchParams(m[1]))
+        setSession(s)
+        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(s))
+      })
+      .catch(() => {})
+      .finally(() => AsyncStorage.removeItem(CONNECTING_KEY).catch(() => {}))
   }, [])
 
   useEffect(() => {
@@ -161,12 +179,14 @@ export function useWallet(): TilltideWallet {
         if (!s) {
           const wallet = await choose()
           const keys = newEncryptionKeypair()
+          await AsyncStorage.setItem(CONNECTING_KEY, JSON.stringify({ wallet: wallet.name, dappSecret: toB58(keys.secretKey) }))
           const reply = await call(
             connectUrl(wallet, { dappPublicKey: keys.publicKey, appUrl: AppConfig.identity.uri, redirect: redirectFor('connect'), cluster: CLUSTER }),
             'connect',
           )
           s = readConnect(wallet, keys.secretKey, reply)
           await save(s)
+          await AsyncStorage.removeItem(CONNECTING_KEY)
         }
         // These wallets have no Sign In With Solana request over deeplinks, so sign the same text as a message.
         const text =
@@ -178,9 +198,11 @@ export function useWallet(): TilltideWallet {
           const { signature } = readReply<{ signature: string }>(s, reply)
           return { address: s.address, signedMessage, signature: fromB58(signature) }
         } catch (e) {
-          // Anything but the owner saying no (4001) means the saved connection is dead, e.g. the wallet
-          // was reinstalled or Tilltide was removed from it. Forget it so the next try connects afresh.
-          if (!(e instanceof WalletRejected && e.code === '4001')) await save(null)
+          // Forget the saved connection only when it's dead: the wallet no longer knows this session (it was
+          // reinstalled, or Tilltide was removed from it) or its reply can't be read. Not when the owner says
+          // no, takes too long, or switches back by hand: that would sign the till out mid-shift.
+          const dead = (e instanceof WalletRejected && (e.code === '4100' || e.code === '4900')) || (e instanceof Error && /Could not read the wallet reply/.test(e.message))
+          if (dead) await save(null)
           throw e
         }
       },

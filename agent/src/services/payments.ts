@@ -209,24 +209,29 @@ export async function markPaymentPaid(
   result: Extract<VerifiedPayment, { ok: true }>,
   redemption: { pointsRedeemed: bigint; discount: bigint } = { pointsRedeemed: 0n, discount: 0n },
 ) {
-  const mark = (tx: typeof sql) => tx`
+  const mark = (tx: typeof sql, r: typeof redemption) => tx`
     update payments set status = 'paid', signature = ${result.signature}, payer = ${result.payer}, paid_at = now(),
-      failure_reason = null, points_redeemed = ${redemption.pointsRedeemed.toString()}, discount = ${redemption.discount.toString()}
+      failure_reason = null, points_redeemed = ${r.pointsRedeemed.toString()}, discount = ${r.discount.toString()}
     where id = ${payment.id} and status in ('pending', 'expired', 'failed') returning id`
-  if (redemption.pointsRedeemed === 0n || !result.payer) return (await mark(sql)).length > 0
+  if (redemption.pointsRedeemed === 0n || !result.payer) return (await mark(sql, redemption)).length > 0
   // A points sale: check the customer's points here again under a lock, so two sales verified at the same
-  // moment (watcher and till) can't both spend the same points.
-  return sql.begin(async (tx) => {
+  // moment (watcher and till) can't both spend the same points. The money has already arrived, so the sale
+  // is always recorded; if the points were spent twice, only what was left counts and the owner is told.
+  const over = await sql.begin(async (tx) => {
     await tx`select pg_advisory_xact_lock(hashtext(${`${payment.merchantId}:${result.payer}`}))`
     const allowed = await shopPointsBalance(payment.merchantId, result.payer!, payment.id, tx as never)
-    if (redemption.pointsRedeemed > allowed) {
-      await tx`
-        update payments set failure_reason = 'Those points were spent on another sale at the same time'
-        where id = ${payment.id} and status = 'pending'`
-      return false
-    }
-    return (await mark(tx as never)).length > 0
+    const points = redemption.pointsRedeemed > allowed ? allowed : redemption.pointsRedeemed
+    const discount = (redemption.discount * points) / redemption.pointsRedeemed
+    const marked = await mark(tx as never, { pointsRedeemed: points, discount })
+    return marked.length ? redemption.discount - discount : null
   })
+  if (over && over > 0n) {
+    void alert(
+      `points-overspend:${payment.id}`,
+      `A points sale was short by ${fromBaseUnits(over, LEDGER_DECIMALS)} ${payment.currency}: the customer's points were spent on another sale at the same moment`,
+    )
+  }
+  return over !== null
 }
 
 /** Something arrived with the reference but isn't a valid payment. Stays pending (the customer can still pay) until expiry. */

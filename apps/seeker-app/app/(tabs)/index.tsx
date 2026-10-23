@@ -165,6 +165,12 @@ export default function ChargeScreen() {
       const latest = await api.cancelPayment(payment.id)
       // It was paid a moment ago: show that instead of clearing it.
       if (latest.status === 'paid') return setPayment({ ...latest, url: payment.url })
+      // PayPal is reviewing a payment the customer already made: it can't be cancelled, and clearing the
+      // screen could lead to charging them twice.
+      if (latest.status === 'pending') {
+        setPayment({ ...latest, url: payment.url })
+        return setError('PayPal is reviewing this payment, so it can’t be cancelled. Keep this screen open; it updates when PayPal finishes.')
+      }
     } catch {
       // Offline: clear the screen anyway; the request still expires by itself.
     }
