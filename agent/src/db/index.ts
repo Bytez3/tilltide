@@ -33,6 +33,10 @@ export interface MerchantRow {
   currency: 'GBP' | 'USD' | 'EUR'
   /** Local closing time (HH:MM) when the end-of-day report is written. */
   closeTime: string
+  /** Assistant plan: questions a month before top-up credits are used. */
+  aiPlan: 'included' | 'plus'
+  /** Top-up assistant questions, used once the month's allowance is spent. */
+  aiCredits: number
   createdAt: Date
 }
 

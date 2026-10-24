@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { alert } from '../alerts'
+import { checkBudget } from './ai-costs'
+import { recordBackgroundUsage } from './usage'
 import { config } from '../config'
 import { sql, type MerchantRow } from '../db'
 import { getDailySummary, reconcileDay, todayIn } from './summary'
@@ -71,6 +73,7 @@ async function narrativeFor(merchant: MerchantRow, text: string, summary: Summar
     const [used] = await sql<{ n: number }[]>`select coalesce(sum(requests), 0)::int as n from agent_usage where day = current_date`
     if (used!.n >= config.agent.globalDailyLimit) return null
   }
+  if (await checkBudget().then(() => false, () => true)) return null
   try {
     const client = new Anthropic({ timeout: 60_000, maxRetries: 1 })
     const isHaiku = config.agent.model.startsWith('claude-haiku')
@@ -84,6 +87,12 @@ async function narrativeFor(merchant: MerchantRow, text: string, summary: Summar
         'You write the end-of-day note for a small independent shop owner. British English, 2-3 short sentences, warm and plain. Use only the figures given. Mention anything to check. No headings or lists.',
       messages: [{ role: 'user', content: `Shop: ${merchant.name}\nFacts: ${text}\nData: ${JSON.stringify(summary)}` }],
     })
+    await recordBackgroundUsage(merchant, config.agent.model, {
+      inputTokens: res.usage.input_tokens,
+      outputTokens: res.usage.output_tokens,
+      cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
+    }).catch(() => {})
     if (res.stop_reason === 'refusal') return null
     const out = res.content
       .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')

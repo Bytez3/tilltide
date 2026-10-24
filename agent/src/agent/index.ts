@@ -168,6 +168,9 @@ export async function runAgent(merchant: MerchantRow, history: ChatTurn[]) {
       { type: 'text', text: context },
     ],
     tools,
+    // The assistant may call the model several times to answer one question (looking things up between
+    // calls). Caching the conversation so far makes each later call in the loop read it at a tenth of the price.
+    cache_control: { type: 'ephemeral' },
     max_iterations: 8,
     messages: history.map((turn) => ({ role: turn.role, content: turn.content })),
   })

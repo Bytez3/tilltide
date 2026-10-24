@@ -52,6 +52,13 @@ export const config = {
     dailyLimit: Number(process.env.AGENT_DAILY_LIMIT ?? 50),
     /** Cap across all shops (unset = none). The public demo sets it, since anyone can make a shop there. */
     globalDailyLimit: process.env.AGENT_GLOBAL_DAILY_LIMIT ? Number(process.env.AGENT_GLOBAL_DAILY_LIMIT) : null,
+    /** Most the AI may cost per day across every shop, in pounds (AI_DAILY_BUDGET_GBP=off to remove it). */
+    dailyBudgetGbp: process.env.AI_DAILY_BUDGET_GBP === 'off' ? null : Number(process.env.AI_DAILY_BUDGET_GBP ?? 10),
+    /** Assistant questions a month: included with Tilltide's fee, and on the Plus plan. Then top-up credits. */
+    monthly: {
+      included: Number(process.env.AGENT_MONTHLY_INCLUDED ?? 100),
+      plus: Number(process.env.AGENT_MONTHLY_PLUS ?? 1500),
+    },
   },
   /** Tilltide's fee on sweeps. Off unless a treasury wallet is set. */
   sweepFee: {
@@ -68,6 +75,8 @@ export const config = {
   },
   /** Browser origins allowed to call the API (the web sandbox). The mobile app doesn't need CORS. */
   corsOrigins: (process.env.CORS_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+  /** Turns on /admin (the AI usage page and plan changes); the secret that unlocks it. Off when unset. */
+  adminToken: process.env.ADMIN_TOKEN || null,
   /** Shared secret Cloudflare adds as x-tilltide-origin. When set, requests without it are refused. */
   originSecret: process.env.ORIGIN_SECRET || null,
   rateLimits: {

@@ -252,3 +252,9 @@ alter table merchants add column if not exists owner_wallet_nonce text;
 alter table merchants add column if not exists owner_wallet_nonce_at timestamptz;
 -- How many Claude notes a day's report has had: rewrites can refresh the note, up to a small cap.
 alter table daily_reports add column if not exists narrative_count int not null default 0;
+
+-- Assistant plans: each month a shop gets its plan's questions, then spends top-up credits.
+alter table merchants add column if not exists ai_plan text not null default 'included';
+alter table merchants drop constraint if exists merchants_ai_plan_check;
+alter table merchants add constraint merchants_ai_plan_check check (ai_plan in ('included', 'plus'));
+alter table merchants add column if not exists ai_credits integer not null default 0 check (ai_credits >= 0);

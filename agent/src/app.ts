@@ -17,7 +17,8 @@ import { buildRedeemTransaction, RedeemError, spendablePoints } from './services
 import { renderReceipt } from './receipt'
 import { clientIp, rateLimit, requireOrigin } from './rate-limit'
 import { approveOwnerWallet, OwnerWalletError, ownerWalletChallenge } from './services/owner-wallet'
-import { reserveAgentRequest, UsageLimitError } from './services/usage'
+import { admin } from './routes/admin'
+import { assistantUsage, reserveAgentRequest, UsageLimitError } from './services/usage'
 import { AuthError, createNonce, createStaffInvite, redeemStaffInvite, revokeToken, sessionForToken, verifySignIn, type Session } from './auth'
 import { config } from './config'
 import { isDate } from './dates'
@@ -658,6 +659,9 @@ shop.get('/summary', async (c) => {
   })
 })
 
+/** The shop's assistant allowance this month: questions used, its plan's allowance and top-up credits. */
+shop.get('/assistant', async (c) => c.json(await assistantUsage(await myShop(c))))
+
 shop.post('/chat', rateLimit({ name: 'chat', windowMs: 60_000, max: 10, key: (c) => c.get('wallet') }), async (c) => {
   const merchant = await myShop(c)
   const input = await body(
@@ -673,7 +677,8 @@ shop.post('/chat', rateLimit({ name: 'chat', windowMs: 60_000, max: 10, key: (c)
   try {
     await reserveAgentRequest(merchant)
     const { usage: _usage, ...result } = await runAgent(merchant, input.messages)
-    return c.json(result)
+    // How much of the month's allowance is left, so the app can warn before it runs out.
+    return c.json({ ...result, assistant: await assistantUsage(await myShop(c)) })
   } catch (err) {
     if (err instanceof UsageLimitError) throw new HTTPException(429, { message: err.message })
     if (err instanceof Anthropic.RateLimitError) throw new HTTPException(429, { message: 'The assistant is busy. Try again in a moment.' })
@@ -881,3 +886,4 @@ shop.post('/refunds/:id/cancel', async (c) => {
 })
 
 app.route('/shop', shop)
+app.route('/admin', admin)

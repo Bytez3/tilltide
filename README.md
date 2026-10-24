@@ -81,6 +81,16 @@ Staff tills pair with a code and need no wallet, on any of these. Customers neve
 
 Builds run on [EAS](https://expo.dev/eas) from `apps/seeker-app` (`eas.json` has the profiles; `test-android` and `test-ios` make installable test builds). The iOS build needs an Apple Developer account, Google Play a Play Console account, and the dApp Store a publisher wallet. For Android sign-in to verify the app, add each Android signing certificate's SHA-256 (EAS's upload key and Play's app signing key) to `ANDROID_CERT_SHA` on the API.
 
+## AI costs and limits
+
+The assistant can't run up a bill:
+- **Per shop:** 50 questions a day (`AGENT_DAILY_LIMIT`), and a monthly allowance: 100 included with Tilltide's fee, 1,500 on Plus (`AGENT_MONTHLY_INCLUDED`, `AGENT_MONTHLY_PLUS`). After that, top-up credits; with none, it asks the owner to top up.
+- **Across all shops:** a daily budget in pounds (`AI_DAILY_BUDGET_GBP`, default £10), with alerts to `ALERT_WEBHOOK_URL` at 50%, 80% and 100%. At 100% the assistant pauses until midnight UTC; the till carries on.
+- **End-of-day notes:** at most 3 per shop per day, none on days without sales, and counted in the budget.
+- **Prompt caching** on the instructions and on the lookups within each question.
+
+With `ADMIN_TOKEN` set, `/admin/usage` (basic auth, the token as the password) shows each shop's questions, AI cost and fee income this month. Grant a plan or credits with `curl -X POST https://tilltide.bytez3.com/admin/shops/<shop id>/assistant -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{"addCredits":200}'` (or `{"plan":"plus"}`).
+
 ## Run it locally
 
 Needs Node 22, pnpm and Docker. For the Android app: Android Studio (emulator or a device) and an MWA wallet on the device (e.g. Phantom or Solflare, set to devnet). For the iPhone app: an EAS build (`eas build -p ios --profile test-ios`) and Phantom or Solflare on the phone.

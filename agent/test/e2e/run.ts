@@ -106,6 +106,9 @@ async function main() {
       RATE_LIMIT_AUTH: '1000',
       RATE_LIMIT_PER_IP: '100000',
       AGENT_DAILY_LIMIT: '2',
+      AGENT_MONTHLY_INCLUDED: '5',
+      AI_DAILY_BUDGET_GBP: '1',
+      ADMIN_TOKEN: 'e2e-admin-token-0123456789',
       WATCH_INTERVAL_MS: '500',
       TREASURY_WALLET: treasury.address,
       SWEEP_FEE_BPS: '50',
@@ -1126,6 +1129,47 @@ async function main() {
       assert.deepEqual(await (await fetch(`${API}/.well-known/assetlinks.json`)).json(), [])
       const headers = (await fetch(`${API}/health`)).headers
       assert.equal(headers.get('x-content-type-options'), 'nosniff')
+    })
+
+    await step('assistant allowance: monthly questions, then top-up credits; a daily £ budget; the admin page', async () => {
+      const shopId = (await api('GET', '/shop', undefined, tillToken)).body.id
+      const chat = () => api('POST', '/shop/chat', { messages: [{ role: 'user', content: 'What did I take today?' }] }, tillToken)
+      await sql`delete from agent_usage where merchant_id = ${shopId}`
+      // The month's 5 included questions are used (earlier this month, so today's cap of 2 isn't).
+      await sql`insert into agent_usage (merchant_id, day, requests) values (${shopId}, date_trunc('month', current_date)::date, 5)
+        on conflict (merchant_id, day) do update set requests = 5`
+      const usage = await api('GET', '/shop/assistant', undefined, tillToken)
+      assert.deepEqual([usage.body.used, usage.body.allowance, usage.body.credits], [5, 5, 0])
+      const out = await chat()
+      assert.equal(out.status, 429)
+      assert.match(out.body.error, /used this month's 5 assistant questions/)
+
+      // The operator grants top-up credits: the admin routes need the admin token.
+      const grant = (token: string, body: object) =>
+        fetch(`${API}/admin/shops/${shopId}/assistant`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      assert.equal((await grant('wrong-token-0123456789abcd', { addCredits: 3 })).status, 401)
+      assert.deepEqual(await (await grant('e2e-admin-token-0123456789', { addCredits: 3 })).json(), { plan: 'included', credits: 3 })
+      // No Claude key in tests, so the call itself fails upstream; the question still used a credit.
+      assert.equal((await chat()).status, 503)
+      assert.equal((await api('GET', '/shop/assistant', undefined, tillToken)).body.credits, 2)
+
+      // Today's AI spend passes the £1 budget: the assistant pauses for everyone, without using a credit.
+      await sql`update agent_usage set input_tokens = 1000000, model = 'claude-opus-5' where merchant_id = ${shopId} and day = date_trunc('month', current_date)::date`
+      await sql`insert into agent_usage (merchant_id, day, requests, output_tokens, model) values (${shopId}, current_date, 0, 200000, 'claude-opus-5')
+        on conflict (merchant_id, day) do update set output_tokens = 200000, model = 'claude-opus-5'`
+      const paused = await chat()
+      assert.equal(paused.status, 429)
+      assert.match(paused.body.error, /paused for the rest of today/)
+      assert.equal((await api('GET', '/shop/assistant', undefined, tillToken)).body.credits, 2)
+
+      // The usage page: AI cost against fee income, behind the admin password.
+      assert.equal((await fetch(`${API}/admin/usage`)).status, 401)
+      const page = await fetch(`${API}/admin/usage`, { headers: { authorization: `Basic ${Buffer.from('admin:e2e-admin-token-0123456789').toString('base64')}` } })
+      assert.equal(page.status, 200)
+      const html = await page.text()
+      assert.match(html, /Pasty Shop/)
+      assert.match(html, /Fee income this month/)
+      await sql`delete from agent_usage where merchant_id = ${shopId}`
     })
 
     await step('watcher expires abandoned requests', async () => {

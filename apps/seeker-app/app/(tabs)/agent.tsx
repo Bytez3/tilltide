@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
 import { RefundCard } from '@/components/refund-card'
@@ -6,7 +7,7 @@ import { SweepCard } from '@/components/sweep-card'
 import { Input } from '@/components/ui'
 import { colors, fonts, ui } from '@/constants/theme'
 import { useMerchant } from '@/features/merchant/merchant-provider'
-import { api, ChatTurn, Refund, Sweep } from '@/lib/api'
+import { api, AssistantUsage, ChatTurn, Refund, Sweep } from '@/lib/api'
 
 /** The API takes up to 40 turns of 4000 characters; keep the most recent and cut long ones. */
 const MAX_TURNS = 20
@@ -36,6 +37,8 @@ export default function AgentScreen() {
   const [signing, setSigning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scroll = useRef<ScrollView>(null)
+  const queryClient = useQueryClient()
+  const usage = useQuery({ queryKey: ['assistant', merchant?.id], queryFn: () => api.assistantUsage(), enabled: !!merchant })
 
   if (!merchant) return null
 
@@ -47,7 +50,8 @@ export default function AgentScreen() {
     setThinking(true)
     setError(null)
     try {
-      const { reply, sweeps, refunds } = await api.chat(forApi(next))
+      const { reply, sweeps, refunds, assistant } = await api.chat(forApi(next))
+      if (assistant) queryClient.setQueryData(['assistant', merchant.id], assistant)
       if (refunds.length) setRefund(refunds.at(-1)!)
       setTurns([...next, { role: 'assistant', content: reply }])
       if (sweeps.length) setSweep(sweeps.at(-1)!)
@@ -119,6 +123,7 @@ export default function AgentScreen() {
         {refund && <RefundCard refund={refund} onChange={setRefund} onBusyChange={setSigning} />}
         {error && <Text style={[ui.muted, { color: colors.danger }]}>{error}</Text>}
       </ScrollView>
+      {usage.data && <UsageLine usage={usage.data} />}
       <View style={[ui.row, { paddingHorizontal: 12, paddingVertical: 10, gap: 8, borderTopColor: colors.line, borderTopWidth: 1, backgroundColor: colors.bg }]}>
         <Input
           style={{ flex: 1, minWidth: 0, borderRadius: 22, paddingHorizontal: 16 }}
@@ -148,5 +153,25 @@ export default function AgentScreen() {
         </Pressable>
       </View>
     </KeyboardAvoidingView>
+  )
+}
+
+/** Questions used this month; a warning from 80%, and what happens once the allowance is used. */
+function UsageLine({ usage }: { usage: AssistantUsage }) {
+  const { used, allowance, credits, resetsOn } = usage
+  const resets = new Date(`${resetsOn}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
+  const over = used >= allowance
+  const near = used >= allowance * 0.8
+  const text = over
+    ? credits > 0
+      ? `This month's ${allowance} questions are used: now using top-up questions (${credits} left).`
+      : `You've used this month's ${allowance} questions. Top up or upgrade to keep asking, or wait until ${resets}.`
+    : near
+      ? `${used} of ${allowance} questions used this month. Resets ${resets}.`
+      : `${used} of ${allowance} questions used this month`
+  return (
+    <Text style={[ui.muted, { textAlign: 'center', paddingHorizontal: 16, paddingTop: 6, color: near && !(over && credits > 0) ? colors.warn : colors.muted }]}>
+      {text}
+    </Text>
   )
 }

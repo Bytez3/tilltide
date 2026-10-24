@@ -98,6 +98,17 @@ export interface Sweep {
   error: string | null
 }
 
+/** The shop's assistant allowance this month. */
+export interface AssistantUsage {
+  plan: 'included' | 'plus'
+  used: number
+  allowance: number
+  /** Top-up questions, used once the month's allowance runs out. */
+  credits: number
+  /** YYYY-MM-DD, when the month's allowance starts again. */
+  resetsOn: string
+}
+
 export interface Refund {
   id: string
   paymentId: string
@@ -225,7 +236,8 @@ export const api = {
   listPayments: () => request<Payment[]>('/shop/payments'),
   getSummary: () => request<{ summary: DailySummary }>('/shop/summary'),
   chat: (messages: ChatTurn[]) =>
-    request<{ reply: string; sweeps: Sweep[]; refunds: Refund[] }>('/shop/chat', post({ messages })),
+    request<{ reply: string; sweeps: Sweep[]; refunds: Refund[]; assistant?: AssistantUsage }>('/shop/chat', post({ messages })),
+  assistantUsage: () => request<AssistantUsage>('/shop/assistant'),
 
   getRefund: (id: string) => request<Refund>(`/shop/refunds/${id}`),
   refundChallenge: (id: string) => request<{ nonce: string; domain: string; statement: string }>(`/shop/refunds/${id}/challenge`, post()),
